@@ -1,0 +1,5 @@
+fvcore
+easydict
+mmcv
+numpy
+opencv-python

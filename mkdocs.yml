@@ -1,0 +1,63 @@
+site_name: pdebug 
+site_description: description
+site_url: https://baidu.com/
+
+theme:
+  name: material
+  palette:
+    primary: black
+    accent: teal
+  icon:
+    repo: fontawesome/brands/gitlab
+  # logo: img/icon-white.svg
+  # favicon: img/favicon.png
+
+repo_name: pdebug
+repo_url: ""
+edit_uri: ""
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - markdown.extensions.codehilite:
+      guess_lang: false
+  - admonition
+  - codehilite
+  - extra
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format ''
+  - pymdownx.tabbed:
+      alternate_style: true
+  - mdx_include:
+      base_path: docs
+  - pymdownx.emoji:
+      emoji_index: !!python/name:materialx.emoji.twemoji
+      emoji_generator: !!python/name:materialx.emoji.to_svg
+
+extra:
+  analytics:
+    provider: google
+    property: ua-133183413-1
+  social:
+    - icon: fontawesome/brands/gitlab
+      link: https://baidu.com
+    - icon: fontawesome/brands/wikipedia-w
+      link: https://baidu.com
+
+extra_css:
+  - css/termynal.css
+  - css/custom.css
+
+extra_javascript:
+  - https://unpkg.com/mermaid@8.4.6/dist/mermaid.min.js
+  - js/termynal.js
+  - js/custom.js
+
+nav:
+  - pdebug: index.md
+  - Installation: install.md
+  - Release Notes: release_notes.md
+  - FAQ: faq.md
