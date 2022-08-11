@@ -20,9 +20,9 @@ def vis(
     """ Visualize deeppose predict and target.
 
     Args:
-    pred: predict keypoint coordinates, [B, N, 3]
-    target: target keypoint coordinates, [B, N, 3]
-    image: image, [B, H, W, 3], or image path list.
+        pred: predict keypoint coordinates, [B, N, 3]
+        target: target keypoint coordinates, [B, N, 3]
+        image: image, [B, H, W, 3], or image path list.
 
     Example:
         >>> from pdebug import deeppose

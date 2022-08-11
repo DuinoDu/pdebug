@@ -6,6 +6,7 @@ import math
 import os
 import sys
 from random import random
+from typing import List
 
 import cv2
 import matplotlib
@@ -970,9 +971,7 @@ def colorize(img, colors):
 def semseg(_seg, image=None, colors=None, hwc=False, alpha=0.5,
            keep_shape_as_image=False):
 
-    if torch and isinstance(_seg, torch.Tensor):
-        _seg = _seg.cpu().numpy()
-
+    _seg = to_numpy(_seg).squeeze()
     seg = _seg.copy()
     assert isinstance(seg, np.ndarray)
 
@@ -1004,25 +1003,82 @@ def semseg(_seg, image=None, colors=None, hwc=False, alpha=0.5,
         blended = image_resize * alpha + mask_color * (1 - alpha)
     else:
         blended = mask_color
-    return blended
+    return np.ascontiguousarray(blended, dtype=np.uint8)
 
 
-def depth(_depth, image=None, vertical=True, min_depth=0.0, max_depth=None):
+def depth(_depth, image=None, vertical=True, min_depth=0.0, max_depth=None, cmap="magma", hist=False):
     """
     visualize depth map.
+
+    Args:
+        cmap: magma / jet / magma_r
     """
     depth_np = to_numpy(_depth).squeeze()
     if max_depth is not None:
-        depth_np = np.clip(depth_np, min_depth, max_depth)
-    vmax = np.percentile(depth_np, 95)
-    normalizer = matplotlib.colors.Normalize(vmin=depth_np.min(), vmax=vmax)
-    mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
-    colormapped_im = (mapper.to_rgba(depth_np)[:, :, :3] * 255).astype(np.uint8)
+        depth_clip = np.clip(depth_np, min_depth, max_depth)
+    else:
+        depth_clip = depth_np
+
+    vmax = np.percentile(depth_clip, 95)
+    normalizer = matplotlib.colors.Normalize(vmin=depth_clip.min(), vmax=vmax)
+    mapper = cm.ScalarMappable(norm=normalizer, cmap=cmap)
+    colormapped_im = (mapper.to_rgba(depth_clip)[:, :, :3] * 255).astype(np.uint8)
 
     if image is not None:
         image = to_numpy(image).squeeze()
+
+        if colormapped_im.shape[0] != image.shape[0]:
+            colormapped_im = cv2.resize(colormapped_im, (image.shape[1], image.shape[0]))
+
         if vertical:
             colormapped_im = np.concatenate((image, colormapped_im), axis=0)
         else:
             colormapped_im = np.concatenate((image, colormapped_im), axis=1)
+
+    if hist:
+        histogram, bin_edges = np.histogram(depth_np, bins=256)
+
+        fig = plt.figure()
+        plt.xlabel("depth")
+        plt.ylabel("pixel count")
+        plt.plot(bin_edges[0:-1], histogram)  # <- or here
+        fig.canvas.draw()
+        hist_image = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        hist_image = hist_image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+
+        if vertical:
+            w = colormapped_im.shape[1]
+            scale = 1.0 * w / hist_image.shape[1]
+            hist_image = cv2.resize(hist_image, (int(hist_image.shape[1]*scale), int(hist_image.shape[0]*scale)))
+            colormapped_im = np.concatenate((colormapped_im, hist_image), axis=0)
+        else:
+            h = colormapped_im.shape[0]
+            scale = 1.0 * h / hist_image.shape[0]
+            hist_image = cv2.resize(hist_image, (int(hist_image.shape[1]*scale), int(hist_image.shape[0]*scale)))
+            colormapped_im = np.concatenate((colormapped_im, hist_image), axis=1)
     return colormapped_im
+
+
+def tensor_hist(
+    data: List,
+    bins: int = 256,
+    xlabel: str = "value",
+    ylabel: str = "count",
+) -> np.ndarray:
+    """Draw tensor value in hist."""
+    if not isinstance(data, list):
+        data = [data]
+    
+    fig = plt.figure()
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    
+    for data_i in data:
+        data_np = to_numpy(data_i)
+        histogram, bin_edges = np.histogram(data_np, bins=bins)
+        plt.plot(bin_edges[0:-1], histogram)
+
+    fig.canvas.draw()
+    hist_image = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+    hist_image = hist_image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    return hist_image
