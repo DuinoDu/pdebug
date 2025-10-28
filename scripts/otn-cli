@@ -32,8 +32,6 @@ EXAMPLES = [
         "otn-cli --node concat_imgdir --path '' --imgdirs a,b,c --titles 1,2,3 --horizontal True",
         "concat multiple image folders.",
     ),
-    # run semseg on photoid badcase data
-    # >> photoid-helper predict-semantic-pcd ./photoid_data_recording <photoid_model_zoo> --badcase Screenshots
 ]
 
 

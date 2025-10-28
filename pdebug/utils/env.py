@@ -30,7 +30,6 @@ __all__ = [
     "IMANTICS_INSTALLED",
     "FFMPEG_INSTALLED",
     "PANDAS_INSTALLED",
-    "PHOTOID_INSTALLED",
     "MMSEG_INSTALLED",
     "PYTORCH3D_INSTALLED",
     "TRIMESH_INSTALLED",
@@ -210,20 +209,6 @@ try:
     PANDAS_INSTALLED = True
 except ModuleNotFoundError:
     PANDAS_INSTALLED = False
-
-try:
-    if os.environ.get("PDEBUG_DISABLE_PHOTOID", None) == "1":
-        PHOTOID_INSTALLED = False
-    else:
-        import photoid
-
-        PHOTOID_INSTALLED = True
-except ModuleNotFoundError:
-    PHOTOID_INSTALLED = False
-except ImportError as e:
-    PHOTOID_INSTALLED = False
-    if "libopencv_calib3d.so" in str(e):
-        print("photoid is not imported, since libopencv_xxx.so is not found.")
 
 try:
     import mmseg

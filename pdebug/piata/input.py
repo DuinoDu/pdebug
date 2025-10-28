@@ -42,8 +42,6 @@ class Input:
 
         if kwargs["name"] == "coco":
             import pdebug.piata.coco
-        elif kwargs["name"] == "PhotoidRecording":
-            import pdebug.piata.handler.photoid_recording
         elif kwargs["name"] == "lance_vita":
             import pdebug.piata.handler.lance_vita
 
@@ -57,11 +55,6 @@ class Input:
             if kwargs["name"] == "coco":
                 raise ValueError(
                     "please import pdebug.piata.coco before using coco"
-                )
-            if kwargs["name"] == "PhotoidRecording":
-                raise ValueError(
-                    "please import pdebug.piata.handler.photoid_recording "
-                    "before using photoid_recording"
                 )
             else:
                 raise ValueError(f"Unvalid name: {kwargs['name']}")
