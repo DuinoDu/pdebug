@@ -18,7 +18,7 @@ dependencies = [
 runnb = "pdebug.runnb.runnb:main"
 
 [options.packages.find]
-include = pdebug*
+include = "pdebug*"
 
 [project.optional-dependencies]
 runnb = ["toml", "hydra-core", "jupytext"]
