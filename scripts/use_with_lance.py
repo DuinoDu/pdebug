@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Run Cortexia-style pipelines over a Lance dataset using pdebug OTN nodes."""
+"""Run Cortexia-style pipelines over a Lance dataset using pdebug OTN nodes.
+
+Install env steps:
+    pip3 install -e ".[all]"
+    bash $INSTALL/torch.sh 2.7.0    # moondream_node required torch = 2.7.0 
+    bash $INSTALL/flash_attn.sh     # qwen2_5_vl
+    bash $INSTALL/DCNv4.sh          # internimage_semseg, including mmcv_full==1.5.0
+
+"""
 
 from __future__ import annotations
 import gc

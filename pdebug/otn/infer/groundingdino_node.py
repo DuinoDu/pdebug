@@ -75,7 +75,7 @@ def _load_groundingdino_model():
     model = AutoModelForZeroShotObjectDetection.from_pretrained(
         model_id,
         device_map=device_map,
-        torch_dtype=torch.float32,
+        dtype=torch.float32,
     )
     processor = AutoProcessor.from_pretrained(model_id)
     model.eval()

@@ -55,7 +55,7 @@ def _load_depth_pro_model():
     model = DepthProForDepthEstimation.from_pretrained(
         model_id,
         device_map=device_map,
-        torch_dtype=torch.float16 if has_cuda else torch.float32,
+        dtype=torch.float16 if has_cuda else torch.float32,
     )
     model.eval()
 

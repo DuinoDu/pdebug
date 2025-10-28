@@ -56,7 +56,7 @@ def _load_qwen_model():
     dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         model_path,
-        torch_dtype=dtype,
+        dtype=dtype,
         attn_implementation="flash_attention_2",
         device_map="auto",
     )

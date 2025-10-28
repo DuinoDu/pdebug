@@ -94,7 +94,7 @@ def _load_moondream_model():
         model_id,
         revision=revision,
         trust_remote_code=True,
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map=device_map,
     )
     model.eval()
