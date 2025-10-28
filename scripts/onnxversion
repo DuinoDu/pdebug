@@ -1,0 +1,25 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+check onnxfile opset version
+"""
+
+from __future__ import print_function
+import argparse
+import os
+import sys
+
+try:
+    import onnx
+except ImportError as e:
+    print("Please install onnx first.")
+    sys.exit()
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("onnxfile", type=str, help="input")
+args = parser.parse_args()
+
+model = onnx.load(args.onnxfile)
+onnx.checker.check_model(model)
+print(model.opset_import[0])

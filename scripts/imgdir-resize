@@ -1,0 +1,59 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+import os
+
+from pdebug.otn import manager as otn_manager
+from pdebug.piata import Input
+from pdebug.utils.decorator import mp
+
+import cv2
+import tqdm
+import typer
+
+
+# @otn_manager.NODE.register(name="imgdir-resize")
+def main(
+    imgdir: str,
+    factor: float = None,
+    min_width: int = None,
+    # num_workers: int = 4,
+    output: str = "tmp_result_resized",
+):
+    """Resize image folders."""
+    if not os.path.exists(output):
+        os.makedirs(output)
+
+    imgfiles = Input(imgdir, name="imgdir").get_reader().imgfiles
+
+    if factor:
+        msg = f"resize factor = {factor}"
+    elif min_width:
+        msg = f"resize to minimal width = {min_width}"
+    else:
+        raise ValueError("Please provide --factor or --min_width")
+    typer.echo(typer.style(msg, fg=typer.colors.YELLOW))
+
+    # @mp(nums=num_workers)
+    def _process(imgfiles):
+        t = tqdm.tqdm(total=len(imgfiles))
+        for imgfile in imgfiles:
+            t.update()
+            img = cv2.imread(imgfile)
+
+            if factor:
+                dst_w = int(img.shape[1] * factor)
+                dst_h = int(img.shape[0] * factor)
+            elif min_width:
+                dst_w = max(min_width, img.shape[1])
+                dst_h = int(dst_w / img.shape[1] * img.shape[0])
+
+            img = cv2.resize(img, (dst_w, dst_h))
+            savename = os.path.join(output, os.path.basename(imgfile))
+            cv2.imwrite(savename, img)
+
+    _process(imgfiles)
+    typer.echo(typer.style(f"saved in {output}", fg=typer.colors.GREEN))
+
+
+if __name__ == "__main__":
+    typer.run(main)

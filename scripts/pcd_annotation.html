@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>点云标注工具</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+        }
+        
+        #container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        #sidebar {
+            width: 250px;
+            background-color: #2c3e50;
+            color: white;
+            padding: 8px;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+            font-size: 11px;
+        }
+        
+        #main-view {
+            flex: 1;
+            position: relative;
+        }
+        
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+        
+        .control-group {
+            margin-bottom: 10px;
+        }
+        
+        .control-group label {
+            display: block;
+            margin-bottom: 2px;
+            font-weight: bold;
+            font-size: 10px;
+        }
+        
+        .control-group input, .control-group button {
+            width: 100%;
+            padding: 4px;
+            margin-bottom: 3px;
+            border: none;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+        
+        .control-group button {
+            background-color: #3498db;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            font-size: 10px;
+            padding: 3px 6px;
+        }
+        
+        .sidebar-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .sidebar-header h2 {
+            margin: 0;
+            font-size: 14px;
+            margin-left: 8px;
+        }
+        
+        .arrow-icon {
+            width: 0;
+            height: 0;
+            border-left: 6px solid #3498db;
+            border-top: 4px solid transparent;
+            border-bottom: 4px solid transparent;
+            margin-right: 5px;
+        }
+        
+        .control-group button:hover {
+            background-color: #2980b9;
+        }
+        
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+            width: 100%;
+        }
+        
+        .file-input-wrapper input[type=file] {
+            position: absolute;
+            left: -9999px;
+        }
+        
+        .file-input-button {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+            text-align: center;
+        }
+        
+        .info-panel {
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px;
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        
+        .slider-container {
+            margin: 6px 0;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .slider-container label {
+            display: inline-block;
+            width: 45px;
+            font-size: 10px;
+            flex-shrink: 0;
+            font-weight: bold;
+        }
+        
+        .slider-container label[for="pos-x"],
+        .slider-container label[for="pos-x-input"],
+        .slider-container label[for="size-w"],
+        .slider-container label[for="size-w-input"],
+        .slider-container label[for="rot-x"],
+        .slider-container label[for="rot-x-input"] {
+            color: #ff0000;
+        }
+        
+        .slider-container label[for="pos-y"],
+        .slider-container label[for="pos-y-input"],
+        .slider-container label[for="size-h"],
+        .slider-container label[for="size-h-input"],
+        .slider-container label[for="rot-y"],
+        .slider-container label[for="rot-y-input"] {
+            color: #00ff00;
+        }
+        
+        .slider-container label[for="pos-z"],
+        .slider-container label[for="pos-z-input"],
+        .slider-container label[for="size-d"],
+        .slider-container label[for="size-d-input"],
+        .slider-container label[for="rot-z"],
+        .slider-container label[for="rot-z-input"] {
+            color: #0000ff;
+        }
+        
+        .slider-container input[type="range"] {
+            flex: 1;
+            min-width: 80px;
+            height: 16px;
+        }
+        
+        .slider-container input[type="number"] {
+            width: 50px;
+            padding: 2px 4px;
+            font-size: 10px;
+            border: none;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="sidebar">
+            <div class="sidebar-header">
+                <div class="arrow-icon"></div>
+                <h2>点云标注工具</h2>
+            </div>
+            
+            <div class="control-group">
+                <label>加载点云文件:</label>
+                <div class="file-input-wrapper">
+                    <input type="file" id="file-input" accept=".ply,.xyz,.txt">
+                    <button class="file-input-button" onclick="document.getElementById('file-input').click()">
+                        选择点云
+                    </button>
+                </div>
+                <div id="file-name" style="font-size: 12px; margin-top: 5px;"></div>
+            </div>
+            
+            <div class="control-group">
+                <label>加载标注文件:</label>
+                <div class="file-input-wrapper">
+                    <input type="file" id="annotation-input" accept=".json">
+                    <button class="file-input-button" onclick="document.getElementById('annotation-input').click()">
+                        选择标注
+                    </button>
+                </div>
+                <div id="annotation-file-name" style="font-size: 12px; margin-top: 5px;"></div>
+            </div>
+            
+            <div class="control-group">
+                <label>包围框控制:</label>
+                <button id="reset-box">重置包围框</button>
+                <button id="toggle-box-color">隐藏包围框颜色</button>
+            </div>
+            
+            <div class="control-group">
+                <label>位置调整:</label>
+                <div style="margin-bottom: 8px;">
+                    <label style="font-size: 10px; margin-bottom: 2px;">坐标系:</label>
+                    <select id="position-mode" style="width: 100%; padding: 3px; font-size: 11px;">
+                        <option value="world">世界坐标系</option>
+                        <option value="local">物体坐标系</option>
+                    </select>
+                </div>
+                <div class="slider-container">
+                    <label for="pos-x">X:</label>
+                    <input type="range" id="pos-x" min="-10" max="10" step="0.001" value="0">
+                    <input type="number" id="pos-x-input" min="-10" max="10" step="0.001" value="0">
+                </div>
+                <div class="slider-container">
+                    <label for="pos-y">Y:</label>
+                    <input type="range" id="pos-y" min="-10" max="10" step="0.001" value="0">
+                    <input type="number" id="pos-y-input" min="-10" max="10" step="0.001" value="0">
+                </div>
+                <div class="slider-container">
+                    <label for="pos-z">Z:</label>
+                    <input type="range" id="pos-z" min="-10" max="10" step="0.001" value="0">
+                    <input type="number" id="pos-z-input" min="-10" max="10" step="0.001" value="0">
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label>大小调整:</label>
+                <div class="slider-container">
+                    <label for="size-w">宽:</label>
+                    <input type="range" id="size-w" min="0.001" max="10" step="0.001" value="2">
+                    <input type="number" id="size-w-input" min="0.001" max="10" step="0.001" value="2">
+                </div>
+                <div class="slider-container">
+                    <label for="size-h">高:</label>
+                    <input type="range" id="size-h" min="0.001" max="10" step="0.001" value="2">
+                    <input type="number" id="size-h-input" min="0.001" max="10" step="0.001" value="2">
+                </div>
+                <div class="slider-container">
+                    <label for="size-d">深:</label>
+                    <input type="range" id="size-d" min="0.001" max="10" step="0.001" value="2">
+                    <input type="number" id="size-d-input" min="0.001" max="10" step="0.001" value="2">
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label>旋转调整:</label>
+                <div class="slider-container">
+                    <label for="rot-x">X轴:</label>
+                    <input type="range" id="rot-x" min="-180" max="180" step="0.1" value="0">
+                    <input type="number" id="rot-x-input" min="-180" max="180" step="0.1" value="0">
+                </div>
+                <div class="slider-container">
+                    <label for="rot-y">Y轴:</label>
+                    <input type="range" id="rot-y" min="-180" max="180" step="0.1" value="0">
+                    <input type="number" id="rot-y-input" min="-180" max="180" step="0.1" value="0">
+                </div>
+                <div class="slider-container">
+                    <label for="rot-z">Z轴:</label>
+                    <input type="range" id="rot-z" min="-180" max="180" step="0.1" value="0">
+                    <input type="number" id="rot-z-input" min="-180" max="180" step="0.1" value="0">
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label>点云显示设置:</label>
+                <div class="slider-container">
+                    <label for="point-size">点直径:</label>
+                    <input type="range" id="point-size" min="0.001" max="0.5" step="0.001" value="0.001">
+                    <input type="number" id="point-size-input" min="0.001" max="0.5" step="0.001" value="0.001">
+                </div>
+                <button id="toggle-points">隐藏点云</button>
+            </div>
+            
+            <div class="control-group">
+                <label>导出:</label>
+                <button id="export-data">导出标注数据</button>
+            </div>
+        </div>
+        
+        <div id="main-view">
+            <div id="canvas-container"></div>
+            <div class="info-panel">
+                <div>点数量: <span id="point-count">0</span></div>
+                <div>鼠标操作: 左键旋转, 右键平移, 滚轮缩放</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Three.js 和控制器 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/PLYLoader.js"></script>
+
+    <script>
+        class PointCloudAnnotator {
+            constructor() {
+                this.scene = null;
+                this.camera = null;
+                this.renderer = null;
+                this.controls = null;
+                this.transformControls = null;
+                this.pointCloud = null;
+                this.boundingBox = null;
+                this.boundingBoxHelper = null;
+                this.initialBoundingBox = null;
+                this.boxColorVisible = true;
+                this.positionMode = 'world'; // 'world' or 'local'
+                this.loadedAnnotation = null; // 存储加载的标注数据
+                this.isAdjustingLocalPosition = false; // 本地坐标拖动中
+                this.lastLocalSliderValues = { x: 0, y: 0, z: 0 }; // 记录本地坐标滑块上一次值
+                
+                this.init();
+                this.setupEventListeners();
+                this.createBoundingBox();
+            }
+            
+            init() {
+                // 创建场景
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color(0x222222);
+                
+                // 创建相机
+                this.camera = new THREE.PerspectiveCamera(
+                    75,
+                    (window.innerWidth - 250) / window.innerHeight,
+                    0.1,
+                    1000
+                );
+                this.camera.position.set(5, 5, 5);
+                this.camera.lookAt(0, 0, 0);
+                
+                // 创建渲染器
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.renderer.setSize(window.innerWidth - 250, window.innerHeight);
+                this.renderer.setPixelRatio(window.devicePixelRatio);
+                document.getElementById('canvas-container').appendChild(this.renderer.domElement);
+                
+                // 添加轨道控制器
+                this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                this.controls.dampingFactor = 0.05;
+                
+                // 添加变换控制器
+                this.transformControls = new THREE.TransformControls(this.camera, this.renderer.domElement);
+                this.transformControls.addEventListener('change', () => this.updateBoundingBoxFromControls());
+                this.transformControls.enabled = false; // 禁用拖拽功能
+                this.scene.add(this.transformControls);
+                
+                // 添加光源
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+                this.scene.add(ambientLight);
+                
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.4);
+                directionalLight.position.set(5, 10, 5);
+                this.scene.add(directionalLight);
+                
+                // 添加网格
+                const gridHelper = new THREE.GridHelper(20, 20);
+                this.scene.add(gridHelper);
+                
+                // 添加坐标轴
+                const axesHelper = new THREE.AxesHelper(5);
+                this.scene.add(axesHelper);
+                
+                this.animate();
+            }
+            
+            createBoundingBox() {
+                // 创建包围框 - 带面的可视化
+                const geometry = new THREE.BoxGeometry(1, 1, 1);
+                const material = new THREE.MeshBasicMaterial({ 
+                    color: 0x00ff00, 
+                    transparent: true,
+                    opacity: 0.3,
+                    side: THREE.DoubleSide
+                });
+                
+                this.boundingBox = new THREE.Mesh(geometry, material);
+                this.scene.add(this.boundingBox);
+                
+                // 创建包围框辅助线
+                this.boundingBoxHelper = new THREE.BoxHelper(this.boundingBox, 0xff0000);
+                this.scene.add(this.boundingBoxHelper);
+                
+                // 包围框颜色显示状态
+                this.boxColorVisible = true;
+                
+                // 设置变换控制器的对象
+                this.transformControls.attach(this.boundingBox);
+                // 禁用拖拽功能，保持控制器用于UI更新但不允许手动拖拽
+                this.transformControls.enabled = false;
+                
+                this.updateUI();
+            }
+            
+            loadPointCloud(file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        this.parsePointCloud(e.target.result);
+                    } catch (error) {
+                        alert('文件格式错误: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+            
+            parsePointCloud(data) {
+                const lines = data.trim().split('\n');
+                const points = [];
+                const colors = [];
+                
+                // 简单的点云解析，支持xyz和xyzrgb格式，包括可能的顶点坐标
+                lines.forEach(line => {
+                    const parts = line.trim().split(/\s+/);
+                    if (parts.length >= 3) {
+                        const x = parseFloat(parts[0]);
+                        const y = parseFloat(parts[1]);
+                        const z = parseFloat(parts[2]);
+                        
+                        if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                            // 检查是否为顶点坐标（红色标记：255 0 0）
+                            const isVertex = parts.length >= 6 && 
+                                           parseFloat(parts[3]) === 255 && 
+                                           parseFloat(parts[4]) === 0 && 
+                                           parseFloat(parts[5]) === 0;
+                            
+                            // 如果不是顶点坐标（红色标记点），则添加到点云
+                            if (!isVertex) {
+                                points.push(x, y, z);
+                                
+                                // 如果有颜色信息
+                                if (parts.length >= 6) {
+                                    const r = parseFloat(parts[3]) / 255;
+                                    const g = parseFloat(parts[4]) / 255;
+                                    const b = parseFloat(parts[5]) / 255;
+                                    colors.push(r, g, b);
+                                } else {
+                                    colors.push(0.8, 0.8, 0.8);
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                if (points.length === 0) {
+                    throw new Error('没有找到有效的点数据');
+                }
+                
+                // 创建点云几何体
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+                geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                
+                // 创建点云材质
+                const material = new THREE.PointsMaterial({
+                    size: 0.001,
+                    vertexColors: true,
+                    sizeAttenuation: true
+                });
+                
+                // 移除旧的点云
+                if (this.pointCloud) {
+                    this.scene.remove(this.pointCloud);
+                }
+                
+                // 创建新的点云
+                this.pointCloud = new THREE.Points(geometry, material);
+                this.scene.add(this.pointCloud);
+                
+                // 保存原始颜色用于对比
+                this.pointCloud.userData.originalColors = colors.slice();
+                
+                // 计算包围盒并调整相机
+                const box = new THREE.Box3().setFromObject(this.pointCloud);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                
+                // 保存初始包围盒信息用于重置
+                this.initialBoundingBox = {
+                    center: center.clone(),
+                    size: size.clone()
+                };
+                
+                // 根据点云实际大小初始化包围框
+                const margin = 1.1; // 10% margin
+                this.boundingBox.scale.set(size.x * margin, size.y * margin, size.z * margin);
+                this.boundingBox.position.copy(center);
+                
+                // 调整相机位置
+                const maxSize = Math.max(size.x, size.y, size.z);
+                this.camera.position.set(maxSize * 2, maxSize * 2, maxSize * 2);
+                this.controls.target.copy(center);
+                this.controls.update();
+                
+                // 更新UI和点云颜色
+                document.getElementById('point-count').textContent = points.length / 3;
+                this.updateUI();
+                this.updatePointColors();
+            }
+            
+            updateBoundingBoxFromControls() {
+                this.updateUI();
+            }
+            
+            toggleBoxColor() {
+                this.boxColorVisible = !this.boxColorVisible;
+                this.boundingBox.material.opacity = this.boxColorVisible ? 0.3 : 0;
+                // 只隐藏面的颜色，线框始终显示
+                this.boundingBoxHelper.visible = true;
+                
+                const button = document.getElementById('toggle-box-color');
+                button.textContent = this.boxColorVisible ? '隐藏包围框颜色' : '显示包围框颜色';
+            }
+            
+            resetBoundingBoxToPointCloud() {
+                if (!this.pointCloud || !this.initialBoundingBox) return;
+                
+                const { center, size } = this.initialBoundingBox;
+                const margin = 1.1; // 10% margin
+                
+                // 重置到点云的实际包围盒
+                this.boundingBox.position.copy(center);
+                this.boundingBox.scale.set(size.x * margin, size.y * margin, size.z * margin);
+                this.boundingBox.rotation.set(0, 0, 0);
+                
+                this.updateUI();
+            }
+            
+            updatePointColors() {
+                if (!this.pointCloud || !this.boundingBox) return;
+                
+                const positions = this.pointCloud.geometry.attributes.position.array;
+                const colors = this.pointCloud.geometry.attributes.color.array;
+                const originalColors = this.pointCloud.userData.originalColors || colors.slice();
+                
+                if (!this.pointCloud.userData.originalColors) {
+                    this.pointCloud.userData.originalColors = originalColors.slice();
+                }
+                
+                const box = new THREE.Box3().setFromObject(this.boundingBox);
+                
+                for (let i = 0; i < positions.length; i += 3) {
+                    const point = new THREE.Vector3(positions[i], positions[i+1], positions[i+2]);
+                    
+                    if (box.containsPoint(point)) {
+                        // 在框内 - 使用原始颜色
+                        colors[i] = originalColors[i];
+                        colors[i+1] = originalColors[i+1];
+                        colors[i+2] = originalColors[i+2];
+                    } else {
+                        // 在框外 - 颜色加深
+                        colors[i] = originalColors[i] * 0.3; // 变暗70%
+                        colors[i+1] = originalColors[i+1] * 0.3;
+                        colors[i+2] = originalColors[i+2] * 0.3;
+                    }
+                }
+                
+                this.pointCloud.geometry.attributes.color.needsUpdate = true;
+            }
+
+            updateUI() {
+                if (!this.boundingBox) return;
+                
+                const position = this.boundingBox.position;
+                const scale = this.boundingBox.scale;
+                const rotation = this.boundingBox.rotation;
+                
+                // 更新滑块值（位置：根据坐标系切换显示）
+                if (this.positionMode === 'world') {
+                    document.getElementById('pos-x').value = position.x;
+                    document.getElementById('pos-y').value = position.y;
+                    document.getElementById('pos-z').value = position.z;
+                } else if (!this.isAdjustingLocalPosition) {
+                    // 物体坐标系：未在拖动时显示为0（相对增量）
+                    document.getElementById('pos-x').value = 0;
+                    document.getElementById('pos-y').value = 0;
+                    document.getElementById('pos-z').value = 0;
+                }
+                
+                document.getElementById('size-w').value = scale.x;
+                document.getElementById('size-h').value = scale.y;
+                document.getElementById('size-d').value = scale.z;
+                
+                document.getElementById('rot-x').value = (rotation.x * 180 / Math.PI);
+                document.getElementById('rot-y').value = (rotation.y * 180 / Math.PI);
+                document.getElementById('rot-z').value = (rotation.z * 180 / Math.PI);
+                
+                // 更新数值输入框（位置：根据坐标系切换显示）
+                if (this.positionMode === 'world') {
+                    document.getElementById('pos-x-input').value = position.x;
+                    document.getElementById('pos-y-input').value = position.y;
+                    document.getElementById('pos-z-input').value = position.z;
+                } else if (!this.isAdjustingLocalPosition) {
+                    document.getElementById('pos-x-input').value = 0;
+                    document.getElementById('pos-y-input').value = 0;
+                    document.getElementById('pos-z-input').value = 0;
+                }
+                
+                document.getElementById('size-w-input').value = scale.x;
+                document.getElementById('size-h-input').value = scale.y;
+                document.getElementById('size-d-input').value = scale.z;
+                
+                document.getElementById('rot-x-input').value = (rotation.x * 180 / Math.PI);
+                document.getElementById('rot-y-input').value = (rotation.y * 180 / Math.PI);
+                document.getElementById('rot-z-input').value = (rotation.z * 180 / Math.PI);
+                
+                // 更新包围框辅助线
+                this.boundingBoxHelper.update();
+                
+                // 更新点云颜色
+                this.updatePointColors();
+            }
+            
+            setupEventListeners() {
+                // 文件上传
+                document.getElementById('file-input').addEventListener('change', (e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                        document.getElementById('file-name').textContent = file.name;
+                        this.loadPointCloud(file);
+                    }
+                });
+                
+                // 重置包围框
+                document.getElementById('reset-box').addEventListener('click', () => {
+                    this.resetBoundingBoxToPointCloud();
+                });
+                
+                // 切换包围框颜色显示
+                document.getElementById('toggle-box-color').addEventListener('click', () => {
+                    this.toggleBoxColor();
+                });
+                
+                // 滑块控制
+                const sliders = ['pos-x', 'pos-y', 'pos-z', 'size-w', 'size-h', 'size-d', 'rot-x', 'rot-y', 'rot-z'];
+                sliders.forEach(sliderId => {
+                    document.getElementById(sliderId).addEventListener('input', (e) => {
+                        this.updateFromSliders();
+                    });
+                    document.getElementById(sliderId).addEventListener('change', (e) => {
+                        this.updateFromSliders();
+                    });
+                    document.getElementById(sliderId).addEventListener('click', (e) => {
+                        this.updateFromSliders();
+                    });
+                });
+                // 位置滑块的按下/松开事件，用于本地坐标模式的增量逻辑
+                ['x','y','z'].forEach(axis => {
+                    const slider = document.getElementById(`pos-${axis}`);
+                    const startAdjust = () => {
+                        if (this.positionMode === 'local') {
+                            this.isAdjustingLocalPosition = true;
+                            const v = parseFloat(slider.value);
+                            this.lastLocalSliderValues[axis] = isNaN(v) ? 0 : v;
+                        }
+                    };
+                    slider.addEventListener('pointerdown', startAdjust);
+                    slider.addEventListener('mousedown', startAdjust);
+                });
+                const endAdjust = () => {
+                    if (this.positionMode === 'local' && this.isAdjustingLocalPosition) {
+                        this.isAdjustingLocalPosition = false;
+                        // 复位滑块与输入框为0，清空增量累积
+                        ['x','y','z'].forEach(axis => {
+                            this.lastLocalSliderValues[axis] = 0;
+                            const s = document.getElementById(`pos-${axis}`);
+                            const i = document.getElementById(`pos-${axis}-input`);
+                            if (s) s.value = 0;
+                            if (i) i.value = 0;
+                        });
+                        this.updateUI();
+                    }
+                };
+                window.addEventListener('pointerup', endAdjust);
+                window.addEventListener('mouseup', endAdjust);
+                
+                // 数值输入框控制
+                const inputs = [
+                    { slider: 'pos-x', input: 'pos-x-input', type: 'position', axis: 'x' },
+                    { slider: 'pos-y', input: 'pos-y-input', type: 'position', axis: 'y' },
+                    { slider: 'pos-z', input: 'pos-z-input', type: 'position', axis: 'z' },
+                    { slider: 'size-w', input: 'size-w-input', type: 'scale', axis: 'x' },
+                    { slider: 'size-h', input: 'size-h-input', type: 'scale', axis: 'y' },
+                    { slider: 'size-d', input: 'size-d-input', type: 'scale', axis: 'z' },
+                    { slider: 'rot-x', input: 'rot-x-input', type: 'rotation', axis: 'x' },
+                    { slider: 'rot-y', input: 'rot-y-input', type: 'rotation', axis: 'y' },
+                    { slider: 'rot-z', input: 'rot-z-input', type: 'rotation', axis: 'z' }
+                ];
+                
+                inputs.forEach(({ slider, input, type, axis }) => {
+                    document.getElementById(input).addEventListener('input', (e) => {
+                        this.updateFromInput(type, axis, e.target.value);
+                    });
+                    document.getElementById(input).addEventListener('change', (e) => {
+                        this.updateFromInput(type, axis, e.target.value);
+                    });
+                    document.getElementById(input).addEventListener('click', (e) => {
+                        this.updateFromInput(type, axis, e.target.value);
+                    });
+                });
+                
+                // 导出数据
+                document.getElementById('export-data').addEventListener('click', () => {
+                    this.exportAnnotationData();
+                });
+                
+                // 点云显示控制
+                document.getElementById('point-size').addEventListener('input', (e) => {
+                    this.updatePointSize(parseFloat(e.target.value));
+                });
+                
+                document.getElementById('point-size-input').addEventListener('input', (e) => {
+                    const value = parseFloat(e.target.value);
+                    if (!isNaN(value)) {
+                        this.updatePointSize(Math.max(0.001, Math.min(0.5, value)));
+                    }
+                });
+                
+                document.getElementById('toggle-points').addEventListener('click', () => {
+                    this.togglePointCloudVisibility();
+                });
+                
+                // 位置模式切换
+                document.getElementById('position-mode').addEventListener('change', (e) => {
+                    this.positionMode = e.target.value;
+                    // 切换模式时重置本地拖动状态
+                    this.isAdjustingLocalPosition = false;
+                    this.lastLocalSliderValues = { x: 0, y: 0, z: 0 };
+                    // 切换模式后刷新UI，使位置控件在local模式显示为0
+                    this.updateUI();
+                });
+                
+                // 加载标注文件
+                document.getElementById('annotation-input').addEventListener('change', (e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                        document.getElementById('annotation-file-name').textContent = file.name;
+                        this.loadAnnotationFile(file);
+                    }
+                });
+                
+                // 窗口大小调整
+                window.addEventListener('resize', () => {
+                    this.camera.aspect = (window.innerWidth - 250) / window.innerHeight;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(window.innerWidth - 250, window.innerHeight);
+                });
+            }
+            
+            updateFromSliders() {
+                if (!this.boundingBox) return;
+                
+                // 更新位置
+                this.updatePositionFromSliders();
+                
+                // 更新大小
+                this.boundingBox.scale.x = parseFloat(document.getElementById('size-w').value);
+                this.boundingBox.scale.y = parseFloat(document.getElementById('size-h').value);
+                this.boundingBox.scale.z = parseFloat(document.getElementById('size-d').value);
+                
+                // 更新旋转
+                this.boundingBox.rotation.x = parseFloat(document.getElementById('rot-x').value) * Math.PI / 180;
+                this.boundingBox.rotation.y = parseFloat(document.getElementById('rot-y').value) * Math.PI / 180;
+                this.boundingBox.rotation.z = parseFloat(document.getElementById('rot-z').value) * Math.PI / 180;
+                
+                this.updateUI();
+            }
+            
+            updatePositionFromSliders() {
+                const x = parseFloat(document.getElementById('pos-x').value);
+                const y = parseFloat(document.getElementById('pos-y').value);
+                const z = parseFloat(document.getElementById('pos-z').value);
+                
+                if (this.positionMode === 'local') {
+                    // 本地坐标：按增量移动（避免在拖动中重置控件导致抖动）
+                    const current = { x: isNaN(x) ? 0 : x, y: isNaN(y) ? 0 : y, z: isNaN(z) ? 0 : z };
+                    ['x','y','z'].forEach(axis => {
+                        const delta = current[axis] - (this.lastLocalSliderValues[axis] || 0);
+                        if (delta !== 0) {
+                            const localOffset = new THREE.Vector3(0, 0, 0);
+                            localOffset[axis] = delta;
+                            const worldOffset = localOffset.applyQuaternion(this.boundingBox.quaternion.clone());
+                            this.boundingBox.position.add(worldOffset);
+                        }
+                        this.lastLocalSliderValues[axis] = current[axis];
+                    });
+                } else {
+                    // 世界坐标系移动
+                    if (!isNaN(x)) this.boundingBox.position.x = x;
+                    if (!isNaN(y)) this.boundingBox.position.y = y;
+                    if (!isNaN(z)) this.boundingBox.position.z = z;
+                }
+            }
+            
+            updateFromInput(type, axis, value) {
+                if (!this.boundingBox) return;
+                
+                const numValue = parseFloat(value);
+                if (isNaN(numValue)) return;
+                
+                switch(type) {
+                    case 'position':
+                        if (this.positionMode === 'local') {
+                            // 物体坐标系移动 - 相对于当前位置
+                            const localOffset = new THREE.Vector3();
+                            localOffset[axis] = numValue;
+                            const worldOffset = localOffset.applyQuaternion(this.boundingBox.quaternion.clone());
+                            this.boundingBox.position.add(worldOffset);
+                            // 重置输入框到0
+                            const sliderEl = document.getElementById(`pos-${axis}`);
+                            const inputEl = document.getElementById(`pos-${axis}-input`);
+                            if (sliderEl) sliderEl.value = 0;
+                            if (inputEl) inputEl.value = 0;
+                        } else {
+                            // 世界坐标系移动
+                            this.boundingBox.position[axis] = numValue;
+                        }
+                        break;
+                    case 'scale':
+                        this.boundingBox.scale[axis] = Math.max(0.01, numValue);
+                        break;
+                    case 'rotation':
+                        this.boundingBox.rotation[axis] = numValue * Math.PI / 180;
+                        break;
+                }
+                
+                this.updateUI();
+            }
+            
+            exportAnnotationData() {
+                if (!this.boundingBox) return;
+                
+                // 计算8个顶点坐标
+                const vertices = [];
+                const box = this.boundingBox;
+                const localVertices = [
+                    // 8个顶点坐标，相对于包围盒中心
+                    [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5],
+                    [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+                    [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5],
+                    [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]
+                ];
+                
+                // 转换到世界坐标系
+                for (const vertex of localVertices) {
+                    const localPos = new THREE.Vector3(
+                        vertex[0] * box.scale.x,
+                        vertex[1] * box.scale.y,
+                        vertex[2] * box.scale.z
+                    );
+                    
+                    // 应用旋转
+                    localPos.applyQuaternion(box.quaternion);
+                    
+                    // 应用位置偏移
+                    const worldPos = localPos.add(box.position);
+                    
+                    vertices.push({
+                        x: worldPos.x,
+                        y: worldPos.y,
+                        z: worldPos.z
+                    });
+                }
+                
+                const data = {
+                    position: {
+                        x: this.boundingBox.position.x,
+                        y: this.boundingBox.position.y,
+                        z: this.boundingBox.position.z
+                    },
+                    scale: {
+                        width: this.boundingBox.scale.x,
+                        height: this.boundingBox.scale.y,
+                        depth: this.boundingBox.scale.z
+                    },
+                    rotation: {
+                        x: this.boundingBox.rotation.x * 180 / Math.PI,
+                        y: this.boundingBox.rotation.y * 180 / Math.PI,
+                        z: this.boundingBox.rotation.z * 180 / Math.PI
+                    },
+                    vertices: vertices
+                };
+                
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'annotation_data.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            
+            updatePointSize(size) {
+                if (!this.pointCloud) return;
+                
+                this.pointCloud.material.size = size;
+                document.getElementById('point-size').value = size;
+                document.getElementById('point-size-input').value = size;
+            }
+            
+            togglePointCloudVisibility() {
+                if (!this.pointCloud) return;
+                
+                this.pointCloud.visible = !this.pointCloud.visible;
+                const button = document.getElementById('toggle-points');
+                button.textContent = this.pointCloud.visible ? '隐藏点云' : '显示点云';
+            }
+            
+            loadAnnotationFile(file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const annotationData = JSON.parse(e.target.result);
+                        this.applyAnnotationData(annotationData);
+                    } catch (error) {
+                        alert('标注文件格式错误: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+            
+            applyAnnotationData(data) {
+                if (!this.boundingBox) {
+                    alert('请先加载点云文件再加载标注文件');
+                    return;
+                }
+                
+                try {
+                    // 应用位置
+                    if (data.position) {
+                        this.boundingBox.position.x = data.position.x || 0;
+                        this.boundingBox.position.y = data.position.y || 0;
+                        this.boundingBox.position.z = data.position.z || 0;
+                    }
+                    
+                    // 应用缩放
+                    if (data.scale) {
+                        this.boundingBox.scale.x = data.scale.width || 1;
+                        this.boundingBox.scale.y = data.scale.height || 1;
+                        this.boundingBox.scale.z = data.scale.depth || 1;
+                    }
+                    
+                    // 应用旋转（角度转弧度）
+                    if (data.rotation) {
+                        this.boundingBox.rotation.x = (data.rotation.x || 0) * Math.PI / 180;
+                        this.boundingBox.rotation.y = (data.rotation.y || 0) * Math.PI / 180;
+                        this.boundingBox.rotation.z = (data.rotation.z || 0) * Math.PI / 180;
+                    }
+                    
+                    // 存储顶点数据（用于验证或后续处理）
+                    if (data.vertices) {
+                        this.loadedAnnotation = data;
+                    } else {
+                        this.loadedAnnotation = data;
+                    }
+                    
+                    this.updateUI();
+                    
+                } catch (error) {
+                    alert('应用标注数据时出错: ' + error.message);
+                }
+            }
+            
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                this.controls.update();
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+        
+        // 初始化应用
+        const annotator = new PointCloudAnnotator();
+    </script>
+</body>
+</html>

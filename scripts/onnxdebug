@@ -1,0 +1,53 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+debug onnx
+"""
+
+from __future__ import print_function
+import argparse
+import os
+
+import onnx
+
+
+def print_optype(model):
+    print("===== op summary =====")
+    optype = dict()
+    for node in model.graph.node:
+        if node.op_type in optype:
+            optype[node.op_type] += 1
+        else:
+            optype[node.op_type] = 1
+    for k in optype:
+        print(f"{k}\t{optype[k]}")
+    print("")
+
+
+def main(args):
+    model = onnx.load(args.onnxfile)
+    onnx.checker.check_model(model)
+    print("===== opset version =====")
+    print(model.opset_import[0])
+    print_optype(model)
+
+    print("debug onnx graph (model) like below")
+    print(
+        """
+    for node in model.graph.node:
+        if node.op_type == 'BatchNormalization':
+            for attr in node.attribute:
+                if attr.name == 'spatial':
+                    attr.i = 1
+                    print('set spatial from 0 to 1')
+            """
+    )
+    __import__("IPython").embed()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("onnxfile", type=str, help="input onnxfile")
+    args = parser.parse_args()
+    main(args)

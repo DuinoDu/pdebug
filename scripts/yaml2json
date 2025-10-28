@@ -1,0 +1,33 @@
+#!/usr/bin/env python3.6
+# -*- coding: utf-8 -*-
+"""
+yaml to json
+"""
+
+from __future__ import print_function
+import argparse
+import json
+import os
+
+try:
+    import oyaml as yaml
+except ImportError as e:
+    print("Please pip install oyaml")
+    import sys
+
+    sys.exit()
+
+
+def main(args):
+    jsonfile = os.path.splitext(args.input)[0] + ".json"
+    with open(args.input, "r") as fid:
+        config = yaml.load(fid, Loader=yaml.SafeLoader)
+    with open(jsonfile, "w") as fid:
+        json.dump(config, fid, indent=2)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("input", type=str, help="input yaml")
+    args = parser.parse_args()
+    main(args)

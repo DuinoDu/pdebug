@@ -1,0 +1,68 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+Convert vott to mscoco
+"""
+
+from __future__ import print_function
+import argparse
+import os
+
+import cv2
+import dataperson
+from dataperson.contrib import coco
+from visperson import draw
+
+
+def main(args):
+    if args.output is None:
+        args.output = "output"
+    imgdir = os.path.join(args.output, "images")
+    annofile = os.path.join(args.output, "annos.json")
+    if not os.path.exists(imgdir):
+        os.makedirs(imgdir)
+
+    source = dataperson.Input(
+        args.vott, videofile=args.videofile, imgdir=args.imgdir
+    )
+    roidb = source.get_roidb()
+    reader = source.get_reader()
+
+    new_roidb = []
+    for ind, roi in enumerate(roidb):
+        if ind % 1000 == 0:
+            print("%d / %d" % (ind, len(roidb)))
+        if "image_timestamp" not in roi:
+            continue
+        ts = roi["image_timestamp"]
+        reader.set_timestamp = ts
+        img = reader.frame
+
+        new_roi = roi.copy()
+        new_roi["image_name"] = "%012d.jpg" % reader.cnt
+        new_roidb.append(new_roi)
+        cv2.imwrite(os.path.join(imgdir, new_roi["image_name"]), img)
+
+        # print(roi['image_name'], ts, img.shape)
+        # img = draw.boxes(img, roi['boxes'])
+        # savename = roi['image_name']
+        # if not savename.endswith('.jpg'):
+        #     savename += '.jpg'
+        # cv2.imwrite(savename, img)
+    coco.save_to_cocoGt(annofile, new_roidb)
+    print("saved to %s" % args.output)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("vott", type=str, help="vott file")
+    parser.add_argument(
+        "--videofile", default=None, type=str, help="input video"
+    )
+    parser.add_argument(
+        "--imgdir", default=None, type=str, help="input imgdir"
+    )
+    parser.add_argument("--output", default=None, type=str, help="output")
+    args = parser.parse_args()
+    main(args)

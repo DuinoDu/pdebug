@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+from typing import Optional
+
+import typer
+
+app = typer.Typer()
+
+
+def run(cmd: str):
+    typer.echo(typer.style(f">> {cmd}", fg=typer.colors.GREEN))
+    subprocess.run(cmd, shell=True, check=True)
+
+
+@app.command()
+def ggml(
+    model: str,
+    llama_cpp_path: Optional[str] = typer.Option(
+        "~/code/github/llama.cpp", help="llama.cpp code path"
+    ),
+    name: Optional[str] = typer.Option("llama", help="output base name"),
+    output: Optional[str] = typer.Option("ggml_output", help="output folder"),
+):
+    """Using llama.cpp to quantize llama model."""
+    ggml_version = "v3"
+
+    if not os.path.isdir(model):
+        raise Exception(f"Could not find model dir at {model}")
+
+    if not os.path.isfile(f"{model}/config.json"):
+        raise Exception(f"Could not find config.json in {model}")
+
+    os.makedirs(output, exist_ok=True)
+
+    llama_cpp_path = os.path.expanduser(llama_cpp_path)
+    if not os.path.exists(f"{llama_cpp_path}/quantize"):
+        print("Building llama.cpp")
+        run(
+            f"cd {llama_cpp_path} && git pull && make clean && LLAMA_CUBLAS=1 make"
+        )
+
+    fp16 = f"{output}/{name}.ggml{ggml_version}.fp16.bin"
+    print(f"Making unquantised GGML at {fp16}")
+    if not os.path.isfile(fp16):
+        run(
+            f"python3 {llama_cpp_path}/convert.py {model} --outtype f16 --outfile {fp16}"
+        )
+    else:
+        print(f"Unquantised GGML(fp16) already exists at: {fp16}")
+
+    print("Making quants")
+    # details about type in
+    #   https://www.reddit.com/r/LocalLLaMA/comments/139yt87/notable_differences_between_q4_2_and_q5_1
+    for type in ["q4_0", "q4_1", "q5_0", "q5_1", "q8_0"]:
+        outfile = f"{output}/{name}.ggml{ggml_version}.{type}.bin"
+        print(f"Making {type} : {outfile}")
+        run(f"{llama_cpp_path}/quantize {fp16} {outfile} {type}")
+
+    os.remove(fp16)
+
+
+CHINESE_LLAMA_2_7B_TEMPLATE = (
+    """[INST] <<SYS>>\nYou are a helpful, respectful and honest assistant.
+Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful,
+unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are
+socially unbiased and positive in nature.If a question does not make any sense, or is not factually coherent,
+explain why instead of answering something not correct. If you don't know the answer to a question,
+please don't share false information.\n<</SYS>>\n\n{} [/INST]"""
+    ""
+)
+
+
+@app.command()
+def infer(model_path: str):
+    """Infer llama model using pytorch."""
+    try:
+        from transformers import (
+            AutoModelForCausalLM,
+            AutoTokenizer,
+            TextStreamer,
+        )
+    except ImportError as e:
+        typer.echo(
+            typer.style(
+                f"transformers is required, install using pip",
+                fg=typer.colors.RED,
+            )
+        )
+        return
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+    model = AutoModelForCausalLM.from_pretrained(model_path).half().cuda()
+    streamer = TextStreamer(
+        tokenizer, skip_prompt=True, skip_special_tokens=True
+    )
+
+    while True:
+        prompt = CHINESE_LLAMA_2_7B_TEMPLATE.format(
+            "用中文回答，When is the best time to visit Beijing, and do you have any suggestions for me?"
+        )
+        input_ids = tokenizer(prompt, return_tensors="pt").input_ids.cuda()
+        generate_ids = model.generate(
+            input_ids, max_new_tokens=4096, streamer=streamer
+        )
+        break
+
+
+if __name__ == "__main__":
+    app()

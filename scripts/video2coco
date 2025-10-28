@@ -1,0 +1,46 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+Convert video to coco-format dataset, with video info.
+"""
+
+from __future__ import print_function
+import argparse
+import os
+
+import cv2
+import dataperson
+from dataperson.contrib import coco
+
+
+def main(args):
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+    imgdir = os.path.join(args.output, "images")
+    if not os.path.exists(imgdir):
+        os.makedirs(imgdir)
+    annofile = os.path.join(args.output, "annos.json")
+    reader = dataperson.Input(videofile=args.input).get_reader()
+    roidb = []
+    for img in reader:
+        roi = dict()
+        imgname = "%012d.jpg" % reader.cnt
+        roi["image_name"] = imgname
+        roi["image_height"] = reader.height
+        roi["image_width"] = reader.width
+        roidb.append(roi)
+        savename = os.path.join(imgdir, imgname)
+        cv2.imwrite(savename, img)
+    videofile = os.path.basename(args.input)
+    coco.save_to_cocoGt(annofile, roidb, videofile=videofile)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("input", type=str, help="input video")
+    parser.add_argument(
+        "--output", default="output", type=str, help="output dir"
+    )
+    args = parser.parse_args()
+    main(args)

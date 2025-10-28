@@ -1,0 +1,57 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+view roidb using dataperson
+"""
+
+from __future__ import print_function
+import argparse
+import pickle
+import sys
+
+import dataperson
+from termcolor import cprint
+
+if sys.version_info[0] == 2:
+    import cPickle as pickle
+else:
+    import pickle
+
+
+def main(args):
+    roidb = dataperson.Input(args.roidb, coco=args.coco).get_roidb()
+    print("roidb len: %d" % len(roidb))
+    try:
+        roidb = dataperson.Input(args.roidb).get_roidb()
+        print("roidb len: %d" % len(roidb))
+    except Exception as e:
+        print(e)
+        cprint("bad roidb pkl", "red")
+        with open(args.roidb, "rb") as fid:
+            fid.seek(0)
+            var = pickle.load(fid, encoding="iso-8859-1")
+        cprint("play with var", "green")
+        print("type: ", type(var))
+    if args.noipython:
+        return
+    else:
+        __import__("IPython").embed()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "roidb", default=None, type=str, help="input roidb pkl"
+    )
+    parser.add_argument(
+        "--coco", dest="coco", action="store_true", help="load as coco file"
+    )
+    parser.add_argument(
+        "--noipython",
+        dest="noipython",
+        action="store_true",
+        help="description",
+    )
+    args = parser.parse_args()
+    main(args)

@@ -1,0 +1,332 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+OneEuroFilter Tool.
+"""
+
+import copy
+import os
+import pprint
+
+from pdebug.algo.dejitter import OneEuroSmooth
+from pdebug.piata import Input
+from pdebug.piata.tracklets import roidb_to_tracklets, tracklets_to_roidb
+from pdebug.visp import draw
+
+import cv2
+import numpy as np
+
+config = {
+    "mincutoff": 1.0,
+    "beta": 1.0,
+    "dcutoff": 1.0,
+    "freq": 120,
+}
+smoother = OneEuroSmooth(**config)
+
+restart = False
+raw_roidb = []
+roidb = []
+enable = False
+
+
+def smooth_roidb(smoother):
+    roidb = copy.deepcopy(raw_roidb)
+    tracklets = roidb_to_tracklets(roidb, keys=["pred_boxes", "pred_kps"])
+    for trackid in tracklets.ids:
+        boxes_list = tracklets[trackid]["pred_boxes"]
+        kps_list = tracklets[trackid]["pred_kps"]
+        boxes_list = smoother.boxes(boxes_list)
+        kps_list = smoother.keypoints(kps_list)
+        tracklets[trackid]["pred_boxes"] = boxes_list
+        tracklets[trackid]["pred_kps"] = kps_list
+    roidb_smoothed = tracklets_to_roidb(tracklets)
+    return roidb_smoothed
+
+
+def set_enable(v):
+    global config, smoother
+    global restart, enable, roidb
+    restart = True
+    enable = v == 1
+    if enable:
+        smoother = OneEuroSmooth(**config)
+        pprint.pprint(config)
+        roidb = smooth_roidb(smoother)
+    else:
+        roidb = copy.deepcopy(raw_roidb)
+    restart = True
+
+
+def set_mincutoff(v):
+    global config, smoother
+    global restart, roidb
+    if not enable:
+        return
+    config["mincutoff"] = max(v / 1000.0 * 2, 0.0001)
+    smoother = OneEuroSmooth(**config)
+    pprint.pprint(config)
+    roidb = smooth_roidb(smoother)
+    restart = True
+
+
+def set_beta(v):
+    global config, smoother
+    global restart, roidb
+    if not enable:
+        return
+    config["beta"] = max(v / 1000.0 * 2, 0)
+    smoother = OneEuroSmooth(**config)
+    pprint.pprint(config)
+    roidb = smooth_roidb(smoother)
+    restart = True
+
+
+def set_dcutoff(v):
+    global config, smoother
+    global restart, roidb
+    if not enable:
+        return
+    config["dcutoff"] = max(v / 1000.0 * 2, 0.0001)
+    smoother = OneEuroSmooth(**config)
+    pprint.pprint(config)
+    roidb = smooth_roidb(smoother)
+    restart = True
+
+
+def set_freq(v):
+    global config, smoother
+    global restart, roidb
+    if not enable:
+        return
+    config["freq"] = max(v * 2, 1)
+    smoother = OneEuroSmooth(**config)
+    pprint.pprint(config)
+    roidb = smooth_roidb(smoother)
+    restart = True
+
+
+import argparse
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    "--roidb", type=str, help="input pred roidb", required=True
+)
+parser.add_argument("--imgdir", type=str, help="input imgdir", required=True)
+parser.add_argument(
+    "--factor", default=None, type=float, help="image resize factor"
+)
+parser.add_argument(
+    "--track-id",
+    dest="track_id",
+    default=None,
+    type=int,
+    help="choose track id",
+)
+parser.add_argument("--start", default=0, type=int, help="start frame")
+parser.add_argument(
+    "--delay", default=10, type=int, help="video play delay, ms"
+)
+parser.add_argument(
+    "--kps-threshold",
+    dest="kps_threshold",
+    default=0.2,
+    type=float,
+    help="keypoints score threshold",
+)
+# render config
+parser.add_argument(
+    "--render", dest="render", action="store_true", help="render to file"
+)
+parser.add_argument(
+    "--mincutoff", default=1.0, type=float, help="mincutoff used by render"
+)
+parser.add_argument(
+    "--beta", default=1.0, type=float, help="beta used by render"
+)
+parser.add_argument(
+    "--dcutoff", default=1.0, type=float, help="dcutoff used by render"
+)
+parser.add_argument(
+    "--freq", default=120, type=int, help="freq used by render"
+)
+parser.add_argument(
+    "--output", default="output", type=str, help="render output"
+)
+args = parser.parse_args()
+
+imgdir = args.imgdir
+pred_file = args.roidb
+raw_roidb = Input(pred_file).get_roidb()
+for ind, roi in enumerate(raw_roidb):
+    if "pred_classes" in roi:
+        # gluonperson multitask output
+        valid_body = roi["pred_classes"] == 1
+        valid_scores = roi["pred_scores"][valid_body]
+        valid_boxes = roi["pred_boxes"][valid_body]
+        valid_body = valid_scores > 0.5
+        body_boxes = valid_boxes[valid_body]
+        kps = roi["pred_kps"][valid_body]
+        roi["pred_boxes"] = body_boxes
+        roi["pred_kps"] = kps
+    if "boxes" in roi:
+        roi["pred_boxes"] = roi.pop("boxes")
+    if "keypoints" in roi:
+        roi["pred_kps"] = roi.pop("keypoints")
+    if args.track_id is not None and "trackid" in roi:
+        valid = np.asarray(roi["trackid"], dtype=np.int32) == args.track_id
+        roi["pred_boxes"] = roi["pred_boxes"][valid]
+        roi["pred_kps"] = roi["pred_kps"][valid]
+        roi["trackid"] = roi["trackid"][valid]
+
+# render output
+if args.render:
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+    raw_output = os.path.join(args.output, "raw")
+    smooth_output = os.path.join(args.output, "smooth")
+    if not os.path.exists(raw_output):
+        os.makedirs(raw_output)
+    if not os.path.exists(smooth_output):
+        os.makedirs(smooth_output)
+
+    def _render_roidb(roidb, output):
+        for ind, roi in enumerate(roidb):
+            if ind < args.start:
+                continue
+            image_file = os.path.basename(roi["image_name"])
+            img = cv2.imread(os.path.join(imgdir, image_file))
+            vis_img = img.copy()
+            if roi["pred_boxes"].shape[0] > 0:
+                vis_img = draw.boxes(
+                    vis_img, roi["pred_boxes"], trackid=roi["trackid"]
+                )
+                vis_img = draw.skeleton(
+                    vis_img, roi["pred_kps"], vis_threshold=args.kps_threshold
+                )
+            savename = os.path.join(output, image_file)
+            cv2.imwrite(savename, vis_img)
+
+    if len(roidb) == 0:
+        roidb = copy.deepcopy(raw_roidb)
+    print("render raw ...")
+    _render_roidb(roidb, raw_output)
+
+    config["mincutoff"] = args.mincutoff
+    config["beta"] = args.beta
+    config["dcutoff"] = args.dcutoff
+    config["freq"] = args.freq
+    smoother = OneEuroSmooth(**config)
+    pprint.pprint(f"render using {config}")
+    roidb = smooth_roidb(smoother)
+    print("render smooth ...")
+    _render_roidb(roidb, smooth_output)
+
+    cmd = (
+        f""
+        "cd {args.output} && imgdir-concat --imgdirs raw,smooth --horizontal --output result &&"
+        "imgdir2video result && rm -rf raw smooth result"
+    )
+    os.system(cmd)
+
+
+# open window
+window = "OneEuroFilter Tool"
+cv2.namedWindow(window)
+cv2.createTrackbar("enable", window, 0, 1, set_enable)
+cv2.createTrackbar("mincutoff", window, 500, 1000, set_mincutoff)
+cv2.createTrackbar("beta", window, 500, 1000, set_beta)
+cv2.createTrackbar("dcutoff", window, 500, 1000, set_dcutoff)
+# cv2.createTrackbar('freq', window, 0, 100, set_freq)
+
+
+while True:
+    if len(roidb) == 0:
+        roidb = copy.deepcopy(raw_roidb)
+    for ind, roi in enumerate(roidb):
+        if ind < args.start:
+            continue
+        image_file = os.path.basename(roi["image_name"])
+        img = cv2.imread(os.path.join(imgdir, image_file))
+
+        vis_img = img.copy()
+        if roi["pred_boxes"].shape[0] > 0:
+            vis_img = draw.boxes(
+                vis_img, roi["pred_boxes"], trackid=roi["trackid"]
+            )
+            vis_img = draw.skeleton(
+                vis_img, roi["pred_kps"], vis_threshold=args.kps_threshold
+            )
+        vis_img = cv2.putText(
+            vis_img,
+            "press esc to exit",
+            (10, 50),
+            cv2.FONT_HERSHEY_COMPLEX,
+            1,
+            (0, 0, 255),
+            2,
+        )
+        vis_img = cv2.putText(
+            vis_img,
+            f"enable: {'True' if enable else 'False'}",
+            (10, 100),
+            cv2.FONT_HERSHEY_COMPLEX,
+            1,
+            (0, 0, 255),
+            2,
+        )
+        vis_img = cv2.putText(
+            vis_img,
+            f"mincutoff: {config['mincutoff']}",
+            (10, 150),
+            cv2.FONT_HERSHEY_COMPLEX,
+            1,
+            (0, 0, 255),
+            2,
+        )
+        vis_img = cv2.putText(
+            vis_img,
+            f"beta: {config['beta']}",
+            (10, 200),
+            cv2.FONT_HERSHEY_COMPLEX,
+            1,
+            (0, 0, 255),
+            2,
+        )
+        vis_img = cv2.putText(
+            vis_img,
+            f"dcutoff: {config['dcutoff']}",
+            (10, 250),
+            cv2.FONT_HERSHEY_COMPLEX,
+            1,
+            (0, 0, 255),
+            2,
+        )
+        vis_img = cv2.putText(
+            vis_img,
+            f"{ind}/{len(roidb)}",
+            (10, img.shape[0] - 50),
+            cv2.FONT_HERSHEY_COMPLEX,
+            1,
+            (0, 0, 255),
+            2,
+        )
+        if args.factor:
+            vis_img = cv2.resize(
+                vis_img,
+                (
+                    int(vis_img.shape[1] * args.factor),
+                    int(vis_img.shape[0] * args.factor),
+                ),
+            )
+
+        cv2.imshow(window, vis_img)
+        ch = cv2.waitKey(args.delay)
+        if ch == 27:  # ord('q')
+            import sys
+
+            sys.exit()
+        if restart:
+            restart = False
+            break

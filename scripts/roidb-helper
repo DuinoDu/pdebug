@@ -1,0 +1,930 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from __future__ import print_function
+import argparse
+import os
+
+try:
+    import cPickle as pickle
+except ImportError as e:
+    import pickle
+
+import numpy as np
+
+try:
+    import commands
+except Exception as e:
+    import subprocess as commands
+
+import math
+import random
+import time
+
+import cv2
+
+# bodytype_mapping = ['standing', 'Squatter', 'Bended', 'Sitter', 'Lier', 'others']
+bodytype_mapping = [
+    "standing",
+    "Bended",
+    "Sitter",
+    "Lier",
+    "Squatter",
+    "others",
+]
+
+
+def fetch_image_wh(imgfile):
+    cmd = "identify -ping -format '%w %h' " + imgfile
+    try:
+        (status, output) = commands.getstatusoutput(cmd)
+        output = [int(x) for x in output.split(" ")[:2]]
+    except Exception as e:
+        print(output)
+        import sys
+
+        sys.exit()
+    return output
+
+
+def flip_boxes(boxes, width):
+    dst_boxes = boxes.copy()
+    dst_boxes[:, 0] = width - boxes[:, 2] - 1.0
+    dst_boxes[:, 2] = width - boxes[:, 0] - 1.0
+    return dst_boxes
+
+
+def flip_feet(feet, width):
+    dst_feet = feet.copy()
+    dst_feet[:, 0] = width - feet[:, 0] - 1.0
+    dst_feet[:, 3] = width - feet[:, 3] - 1.0
+    return dst_feet
+
+
+def flip_coco_kps(src_kps, img_width):
+    # src_kps: (num_boxes, num_kps*3)  [x1, y1, v1]
+    num_kps = src_kps.shape[1] / 3
+    assert num_kps == 17
+    dst_kps_tmp = src_kps.copy()
+    dst_kps_tmp[:, ::3] = img_width - src_kps[:, ::3] - 1.0
+    NOSE = 0
+    LEFT_EYE = 1
+    RIGHT_EYE = 2
+    LEFT_EAR = 3
+    RIGHT_EAR = 4
+    LEFT_SHOULDER = 5
+    RIGHT_SHOULDER = 6
+    LEFT_ELBOW = 7
+    RIGHT_ELBOW = 8
+    LEFT_WRIST = 9
+    RIGHT_WRIST = 10
+    LEFT_HIP = 11
+    RIGHT_HIP = 12
+    LEFT_KNEE = 13
+    RIGHT_KNEE = 14
+    LEFT_ANKLE = 15
+    RIGHT_ANKLE = 16
+    l_index = [
+        LEFT_EYE,
+        LEFT_EAR,
+        LEFT_SHOULDER,
+        LEFT_ELBOW,
+        LEFT_WRIST,
+        LEFT_HIP,
+        LEFT_KNEE,
+        LEFT_ANKLE,
+    ]
+    r_index = [
+        RIGHT_EYE,
+        RIGHT_EAR,
+        RIGHT_SHOULDER,
+        RIGHT_ELBOW,
+        RIGHT_WRIST,
+        RIGHT_HIP,
+        RIGHT_KNEE,
+        RIGHT_ANKLE,
+    ]
+    dst_kps = dst_kps_tmp.copy()
+    for idx in range(len(l_index)):
+        dst_kps[:, l_index[idx] * 3 : l_index[idx] * 3 + 3] = dst_kps_tmp[
+            :, r_index[idx] * 3 : r_index[idx] * 3 + 3
+        ]
+        dst_kps[:, r_index[idx] * 3 : r_index[idx] * 3 + 3] = dst_kps_tmp[
+            :, l_index[idx] * 3 : l_index[idx] * 3 + 3
+        ]
+    return dst_kps
+
+
+def rotate_image(src, angle):
+    w = src.shape[1]
+    h = src.shape[0]
+    radian = angle / 180.0 * math.pi
+    radian_sin = math.sin(radian)
+    radian_cos = math.cos(radian)
+    new_w = int(abs(radian_cos * w) + abs(radian_sin * h))
+    new_h = int(abs(radian_sin * w) + abs(radian_cos * h))
+    rot_mat = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, 1.0)
+    rot_mat[0, 2] += (new_w - w) / 2.0
+    rot_mat[1, 2] += (new_h - h) / 2.0
+    dst_img = cv2.warpAffine(
+        src, rot_mat, (new_w, new_h), flags=cv2.INTER_LINEAR
+    )
+    return dst_img
+
+
+def rotate_points(
+    src_points, angle, src_img_shape, dst_img_shape, do_clip=True
+):
+    # src_points: (num_points, 2)
+    # img_shape: [h, w, c]
+    src_img_center = [src_img_shape[1] / 2.0, src_img_shape[0] / 2.0]
+    dst_img_center = [dst_img_shape[1] / 2.0, dst_img_shape[0] / 2.0]
+    radian = angle / 180.0 * math.pi
+    radian_sin = math.sin(radian)
+    radian_cos = math.cos(radian)
+    dst_points = np.zeros(src_points.shape, dtype=src_points.dtype)
+    src_x = src_points[:, 0] - src_img_center[0]
+    src_y = src_points[:, 1] - src_img_center[1]
+    dst_points[:, 0] = radian_cos * src_x + radian_sin * src_y
+    dst_points[:, 1] = -radian_sin * src_x + radian_cos * src_y
+    dst_points[:, 0] += dst_img_center[0]
+    dst_points[:, 1] += dst_img_center[1]
+    if do_clip:
+        dst_points[:, 0] = np.clip(dst_points[:, 0], 0, dst_img_shape[1] - 1)
+        dst_points[:, 1] = np.clip(dst_points[:, 1], 0, dst_img_shape[0] - 1)
+    return dst_points
+
+
+def rotate_boxes(src_boxes, angle, src_img_shape, dst_img_shape):
+    # src_boxes: (num_boxes, 4)  [x1, y1, x2, y2]
+    num_boxes = src_boxes.shape[0]
+    x1 = src_boxes[:, 0, np.newaxis]
+    y1 = src_boxes[:, 1, np.newaxis]
+    x2 = src_boxes[:, 2, np.newaxis]
+    y2 = src_boxes[:, 3, np.newaxis]
+    lt = np.hstack([x1, y1])
+    rt = np.hstack([x2, y1])
+    lb = np.hstack([x1, y2])
+    rb = np.hstack([x2, y2])
+    src_points = np.vstack([lt, rt, lb, rb])
+    dst_points = rotate_points(src_points, angle, src_img_shape, dst_img_shape)
+    dst_lt = dst_points[:num_boxes, :]
+    dst_rt = dst_points[num_boxes : num_boxes * 2, :]
+    dst_lb = dst_points[num_boxes * 2 : num_boxes * 3, :]
+    dst_rb = dst_points[num_boxes * 3 :, :]
+    dst_boxes = np.zeros(src_boxes.shape, dtype=src_boxes.dtype)
+    dst_boxes[:, 0] = np.minimum(dst_lt[:, 0], dst_lb[:, 0])
+    dst_boxes[:, 1] = np.minimum(dst_lt[:, 1], dst_rt[:, 1])
+    dst_boxes[:, 2] = np.maximum(dst_rt[:, 0], dst_rb[:, 0])
+    dst_boxes[:, 3] = np.maximum(dst_lb[:, 1], dst_rb[:, 1])
+    return dst_boxes
+
+
+def rotate_kps(src_kps, angle, src_img_shape, dst_img_shape):
+    # src_kps: (num_boxes, num_kps * 3)  [x1, y1, v1]
+    num_boxes = src_kps.shape[0]
+    dst_kps = src_kps.copy()
+    src_kps1 = src_kps[:, :-1].reshape((-1, 3))
+    dst_kps1 = src_kps1.copy()
+    dst_kps1[:, :2] = rotate_points(
+        src_kps1[:, :2], angle, src_img_shape, dst_img_shape
+    )
+    dst_kps[:, :-1] = dst_kps1.reshape((num_boxes, -1))
+    return dst_kps
+
+
+def pts_in_box(pts, box):
+    valid = (
+        (pts[0::3] < box[0]).sum()
+        + (pts[0::3] > box[2]).sum()
+        + (pts[1::3] < box[1]).sum()
+        + (pts[1::3] > box[3]).sum()
+    )
+    return valid == 0
+
+
+def gen_luid():
+    """
+    generate luid string
+    """
+    s1 = time.strftime("%Y%m%d%H%M%S", time.localtime())
+    s2 = "%05d" % random.randint(0, 100000)
+    return "%s-%s" % (s1, s2)
+
+
+def main(args):
+    print("loading %s" % args.roidb)
+    try:
+        roidb = pickle.load(open(args.roidb, "rb"))
+    except Exception as e:
+        roidb = pickle.load(open(args.roidb, "rb"), encoding="iso-8859-1")
+    new_roidb = []
+    if args.output is None:
+        args.output = args.roidb[:-4] + "_update.pkl"
+
+    if args.add_keynames is not None:
+        gt_file = args.add_keynames.split(",")[0]
+        gt_keynames = args.add_keynames.split(",")[1:]
+        try:
+            gt_roidb = pickle.load(open(gt_file, "rb"))
+        except Exception as e:
+            gt_roidb = pickle.load(open(gt_file, "rb"), encoding="iso-8859-1")
+
+        for gt_keyname in gt_keynames:
+            assert gt_keyname in gt_roidb[0], "%s not in %s" % (
+                gt_keyname,
+                gt_file,
+            )
+            if gt_keyname in roidb[0]:
+                print("%s already in roidb" % gt_keyname)
+                import sys
+
+                sys.exit()
+        gt_dict = dict()
+        for roi in gt_roidb:
+            gt_dict[os.path.basename(roi["image_name"])] = roi
+
+    sum_empty = 0
+    sum_smallbox = 0
+    sum_partkps = 0
+    sum_zerokps = 0
+
+    from_to = False
+    if args.from_to is not None:
+        old_keyname = args.from_to.split(":")[0]
+        new_keyname = args.from_to.split(":")[1]
+        from_to = True
+        if new_keyname in roidb[0]:
+            print("%s already in roidb, overwrite" % new_keyname)
+
+    imglist = None
+    if args.imglist is not None:
+        imglist = [x.strip() for x in open(args.imglist, "r")]
+    if args.imgdir is not None:
+        args.imgdir = os.path.abspath(args.imgdir)
+    if args.sample is not None:
+        assert args.sample <= len(roidb)
+        sample_dist = int(len(roidb) / args.sample)
+        sample_ind = [i for i in range(len(roidb)) if i % sample_dist == 0]
+        if len(sample_ind) > args.sample:
+            sample_ind = sample_ind[: args.sample]
+        assert len(sample_ind) == args.sample, "%d == %d" % (
+            len(sample_ind),
+            args.sample,
+        )
+    if args.dump_imglist:
+        imglist_filename = "roidb_imglist.txt"
+        dump_imglist = []
+
+    if args.split_by_box_width is not None:
+        if args.output == args.roidb:
+            args.output = args.roidb.replace(".pkl", "_split.pkl")
+        assert (
+            "~" in args.split_by_box_width
+        ), "set split_by_box_width by v1~v2 format"
+        small_width = int(args.split_by_box_width.split("~")[0])
+        large_width = int(args.split_by_box_width.split("~")[1])
+
+    if args.keep_unique_imgname:
+        old_sum = len(roidb)
+        roidb = {roi["image"]: roi for roi in roidb}
+        roidb = [roidb[k] for k in roidb]
+        new_sum = len(roidb)
+        print(f"[keep unique name] {old_sum} => {new_sum}")
+
+    for ind, roi in enumerate(roidb):
+        if ind % 1000 == 0:
+            print("%d / %d" % (ind, len(roidb)))
+        if args.imglist is not None:
+            if os.path.basename(roi["image_name"]) not in imglist:
+                continue
+        if args.imgdir is not None:
+            roi["image_name"] = os.path.join(
+                args.imgdir, os.path.basename(roi["image_name"])
+            )
+
+        if args.add_keynames is not None:
+            gt_roi = gt_dict[os.path.basename(roi["image_name"])]
+            for gt_keyname in gt_keynames:
+                roi[gt_keyname] = gt_roi[gt_keyname]
+
+        if args.add_gt_classes:
+            if "gt_classes" not in roi:
+                assert "boxes" in roi
+                num_boxes = roi["boxes"].shape[0]
+                gt_classes = np.ones((num_boxes,), dtype=np.float32)
+                roi["gt_classes"] = gt_classes
+            else:
+                print("gt_classes exists")
+
+        if args.add_luid:
+            if "boxes_luid" not in roi:
+                assert "boxes" in roi
+                num_boxes = roi["boxes"].shape[0]
+                roi["boxes_luid"] = [gen_luid() for _ in range(num_boxes)]
+            else:
+                print("boxes_luid exists")
+                import sys
+
+                sys.exit()
+
+        if args.add_fake_pose:
+            if "pose" not in roi:
+                assert "boxes" in roi
+                num_boxes = roi["boxes"].shape[0]
+                fake_pose = np.ones((num_boxes, 3), dtype=np.float32)
+                fake_pose.fill(-10000.0)
+                roi["pose"] = fake_pose
+            else:
+                print("pose exists")
+
+        if args.rm_blank_in_imgname and "image_name" in roi:
+            if " " in roi["image_name"]:
+                roi["image_name"] = roi["image_name"].replace(" ", "")
+
+        if (
+            not args.no_size_check
+            and "height" not in roi.keys()
+            and args.imgdir is not None
+        ):
+            roi["width"], roi["height"] = fetch_image_wh(roi["image_name"])
+
+        if args.repair_width_height:
+            roi["width"], roi["height"] = fetch_image_wh(roi["image_name"])
+
+        if args.repair_boxes_by_lmks:
+            assert "boxes" in roi
+            assert "lmks" in roi
+            assert "width" in roi
+            assert roi["lmks"].shape[0] == roi["boxes"].shape[0]
+            new_boxes = []
+            for box, lmk in zip(roi["boxes"], roi["lmks"]):
+                if not pts_in_box(lmk, box):
+                    x1 = max(lmk[0::3].min() - 30, 0)
+                    x2 = min(lmk[0::3].max() + 30, roi["width"])
+                    y1 = max(lmk[1::3].min() - 80, 0)
+                    y2 = min(lmk[1::3].max() + 20, roi["height"])
+                    box = [x1, y1, x2, y2]
+                new_boxes.append(box)
+            roi["boxes"] = np.array(new_boxes, dtype=np.float32)
+
+        if args.rm_nohuman and roi["keypoints"].shape[0] == 0:
+            sum_empty += 1
+            continue
+
+        if "boxes" in roi:
+            valid_box = np.array([True for _ in range(roi["boxes"].shape[0])])
+        else:
+            valid_box = np.array([])
+
+        if args.rm_smallbox:
+            valid_w = (roi["boxes"][:, 2] - roi["boxes"][:, 0]) > 30
+            valid_h = (roi["boxes"][:, 3] - roi["boxes"][:, 1]) > 30
+            valid_box = np.logical_and(valid_w, valid_h)
+            sum_smallbox += roi["boxes"].shape[0] - np.sum(valid_box)
+
+        if args.rm_partkps and roi["keypoints"].shape[0] > 0:
+            num_roi = roi["keypoints"].shape[0]
+            keypoints = roi["keypoints"].reshape(num_roi, -1, 3)
+            valid_kps = np.array([True for _ in range(num_roi)])
+            for ind, kps in enumerate(keypoints):
+                valid_kps[ind] = np.sum(kps[:, -1] > 0) > 5
+            valid_box = np.logical_and(valid_box, valid_kps)
+            sum_partkps += num_roi - np.sum(valid_kps)
+
+        if args.rm_not_standing and "bodytype" in roi:
+            valid_box = np.array(
+                [True if t == "standing" else False for t in roi["bodytype"]]
+            )
+            if not np.any(valid_box):
+                continue
+
+        if args.attrlabel2bodytype and "attr_label" in roi:
+            roi["bodytype"] = list()
+            for i in roi["attr_label"]:
+                roi["bodytype"].append(bodytype_mapping[i])
+
+        if args.rm_zerokps:
+            num_roi = roi["keypoints"].shape[0]
+            keypoints = roi["keypoints"]
+            valid_kps = np.array([True for _ in range(num_roi)])
+            for ind, kps in enumerate(keypoints):
+                valid_kps[ind] = kps.sum() > 0
+            valid_box = np.logical_and(valid_box, valid_kps)
+            sum_zerokps += num_roi - np.sum(valid_kps)
+
+        if args.rm_bad_boxes:
+            valid1 = np.alltrue(roi["boxes"][:, 0] <= roi["width"] - 1)
+            valid2 = np.alltrue(roi["boxes"][:, 1] <= roi["height"] - 1)
+            valid3 = np.alltrue(roi["boxes"][:, 2] <= roi["width"] - 1)
+            valid4 = np.alltrue(roi["boxes"][:, 3] <= roi["height"] - 1)
+            valid5 = np.alltrue(roi["boxes"][:, 0] < roi["boxes"][:, 2])
+            valid6 = np.alltrue(roi["boxes"][:, 1] < roi["boxes"][:, 3])
+            if not (
+                valid1 and valid2 and valid3 and valid4 and valid5 and valid6
+            ):
+                continue
+
+        if args.rm_bad_feet:
+            x_dist_thres = 200
+            y_dist_thres = 100
+            assert "boxes" in roi
+            assert "feet" in roi
+            x_dist1 = np.abs(
+                roi["feet"][:, 0]
+                - (roi["boxes"][:, 0] + roi["boxes"][:, 2]) / 2
+            )
+            x_dist2 = np.abs(
+                roi["feet"][:, 3]
+                - (roi["boxes"][:, 0] + roi["boxes"][:, 2]) / 2
+            )
+            y_dist1 = np.abs(roi["feet"][:, 1] - roi["boxes"][:, 3])
+            y_dist2 = np.abs(roi["feet"][:, 4] - roi["boxes"][:, 3])
+            valid_box1 = np.logical_and(
+                x_dist1 < x_dist_thres, x_dist2 < x_dist_thres
+            )
+            valid_box2 = np.logical_and(
+                y_dist1 < y_dist_thres, y_dist2 < y_dist_thres
+            )
+            valid_box = np.logical_and(valid_box1, valid_box2)
+            if not np.any(valid_box):
+                continue
+
+        if args.find_bad_feet:
+            y_dist_thres = 100
+            assert "boxes" in roi
+            assert "feet" in roi
+            y_dist1 = np.abs(roi["feet"][:, 1] - roi["boxes"][:, 3])
+            y_dist2 = np.abs(roi["feet"][:, 4] - roi["boxes"][:, 3])
+            valid_box = np.logical_and(
+                y_dist1 > y_dist_thres, y_dist2 > y_dist_thres
+            )
+            if not np.any(valid_box):
+                continue
+
+        if from_to:
+            if old_keyname not in roi:
+                print("bad from_to: %s" % old_keyname)
+                print("available:", roi.keys())
+                return
+            if isinstance(roi[old_keyname], list):
+                roi[old_keyname] = np.array(roi[old_keyname], dtype=np.float32)
+            if roi[old_keyname].shape[0] == 0:
+                sum_empty += 1
+                continue
+            roi[new_keyname] = roi[old_keyname]
+            if args.notkeep:
+                roi.pop(old_keyname)
+
+        if args.flip_box is not None:
+            assert args.flip_box in roi, (
+                "not found %s in roi.keys()" % args.flip_box
+            )
+            roi[args.flip_box] = flip_boxes(roi[args.flip_box], roi["width"])
+        if args.flip_kps is not None:
+            assert args.flip_kps in roi, (
+                "not found %s in roi.keys()" % args.flip_kps
+            )
+            roi[args.flip_kps] = flip_coco_kps(
+                roi[args.flip_kps], roi["width"]
+            )
+        if args.flip_feet is not None:
+            assert args.flip_feet in roi, (
+                "not found %s in roi.keys()" % args.flip_feet
+            )
+            roi[args.flip_feet] = flip_feet(roi[args.flip_feet], roi["width"])
+
+        if args.add_box_score:
+            if roi["pred_boxes"].shape[1] == 4:
+                roi["pred_boxes"] = np.concatenate(
+                    (
+                        roi["pred_boxes"],
+                        np.ones(
+                            (roi["pred_boxes"].shape[0], 1),
+                            dtype=roi["pred_boxes"].dtype,
+                        ),
+                    ),
+                    axis=1,
+                )
+        if args.rm_box_score:
+            box_keyname = "pred_boxes" if "pred_boxes" in roi else "boxes"
+            if box_keyname not in roi:
+                print("%s not found" % box_keyname)
+                return
+            if roi[box_keyname].shape[1] == 5:
+                roi[box_keyname] = roi[box_keyname][:, :4]
+
+        if args.rotate_angle != 0:
+            img = np.zeros((roi["height"], roi["width"], 3), dtype=np.uint8)
+            unrotated_angle = args.rotate_angle * (-1)
+            shape1 = img.shape
+            shape2 = rotate_image(img, unrotated_angle).shape
+            roi["kps_pred"] = rotate_kps(
+                roi["kps_pred"], unrotated_angle, shape2, shape1
+            )
+
+        if args.rm_kps_score:
+            if "keypoints" in roi and roi["keypoints"].shape[1] % 3 != 0:
+                roi["keypoints"] = roi["keypoints"][:, :-1]
+            if "kps_pred" in roi and roi["kps_pred"].shape[1] % 3 != 0:
+                roi["kps_pred"] = roi["kps_pred"][:, :-1]
+
+        if args.rm_keynames is not None:
+            keys = roi.keys()
+            for keyname in keys:
+                if keyname in args.rm_keynames:
+                    roi.pop(keyname)
+
+        if args.filter_by_kps_width_range is not None and "kps_pred" in roi:
+            split_str = "_"
+            assert split_str in args.filter_by_kps_width_range, "bad format"
+            kps_type = args.filter_by_kps_width_range.split(split_str)[0]
+            left = int(args.filter_by_kps_width_range.split(split_str)[1])
+            right = int(args.filter_by_kps_width_range.split(split_str)[2])
+
+            kps = roi["kps_pred"][:, :51].reshape(-1, 17, 3)
+
+            shoulder = np.linalg.norm(kps[:, 5, :2] - kps[:, 6, :2], axis=1)
+            hip = np.linalg.norm(kps[:, 11, :2] - kps[:, 12, :2], axis=1)
+
+            assert kps_type in ("shoulder", "hip")
+            target_kps = eval(kps_type)
+            valid = np.logical_and(target_kps > left, target_kps < right)
+            roi["kps_pred"] = kps[valid].reshape(-1, 51)
+            roi["boxes"] = roi["boxes"][valid]
+            if "keypoints" in roi and roi["keypoints"].shape[0] > 0:
+                roi["keypoints"] = roi["keypoints"][valid]
+            if "feet" in roi:
+                roi["feet"] = roi["feet"][valid]
+            if "pred_feet" in roi:
+                roi["pred_feet"] = roi["pred_feet"][valid]
+
+        if args.rm_not_jpg_imgname:
+            ext = os.path.splitext(roi["image_name"])[1]
+            if "jpg" not in ext:
+                continue
+
+        if args.sample is not None:
+            if ind not in sample_ind:
+                continue
+
+        if args.clothes_landmarks:
+            box = roi["boxes"][0]
+            kps = roi["clothes_landmarks"][0].reshape(-1, 3)
+            # if roi['clothes_type'] != 'lower_body':
+            if roi["clothes_type"] != "upper_body":
+                continue
+            else:
+                try:
+                    valid = np.logical_and(kps[:, 0] != 0, kps[:, 1] != 0)
+                    if valid.shape[0] == 0:
+                        continue
+                    kps_y = kps[valid][:, 1]
+                    if kps_y.min() > roi["height"] / 2 - 100:
+                        continue
+                    if kps_y.max() < roi["height"] / 2 + 100:
+                        continue
+                except Exception as e:
+                    continue
+
+        if args.choose_side_body:
+            kps = roi["kps_pred"][:, :51].reshape(-1, 17, 3)
+            shoulder = np.linalg.norm(kps[:, 5, :2] - kps[:, 6, :2], axis=1)[0]
+            if shoulder > 50:
+                continue
+
+        if args.dump_imglist:
+            dump_imglist.append(os.path.basename(roi["image_name"]))
+
+        if args.split_by_box_width is not None:
+            boxes_w = roi["boxes"][:, 2] - roi["boxes"][:, 0]
+            choose_ind = np.logical_and(
+                boxes_w > small_width, boxes_w <= large_width
+            )
+            valid_box = np.logical_and(valid_box, choose_ind)
+
+        if args.rm_more_boxes:
+            if valid_box.shape[0] > 1:
+                valid_box[1:] = False
+
+        if valid_box.shape[0] > 0:
+            roi["boxes"] = roi["boxes"][valid_box]
+            if roi["boxes"].shape[0] == 0:
+                continue
+            if "gt_classes" in roi and roi["gt_classes"].shape[0] > 0:
+                roi["gt_classes"] = roi["gt_classes"][valid_box]
+            if "keypoints" in roi and roi["keypoints"].shape[0] > 0:
+                roi["keypoints"] = roi["keypoints"][valid_box]
+            if "feet" in roi and roi["feet"].shape[0] > 0:
+                roi["feet"] = roi["feet"][valid_box]
+            if "head" in roi and roi["head"].shape[0] > 0:
+                roi["head"] = roi["head"][valid_box]
+            if "lmks" in roi and roi["lmks"].shape[0] > 0:
+                roi["lmks"] = roi["lmks"][valid_box]
+            if "pose" in roi and roi["pose"].shape[0] > 0:
+                roi["pose"] = roi["pose"][valid_box]
+            if "face_pose" in roi and roi["face_pose"].shape[0] > 0:
+                roi["face_pose"] = roi["face_pose"][valid_box]
+            if "bodytype" in roi and len(roi["bodytype"]) > 0:
+                tmp = np.array(roi["bodytype"])
+                roi["bodytype"] = tmp[valid_box].tolist()
+
+        new_roidb.append(roi)
+
+    if args.sort_by_imagename:
+        new_roidb = sorted(new_roidb, key=lambda k: k["image_name"])
+
+    with open(args.output, "wb") as fid:
+        pickle.dump(new_roidb, fid)
+    print("empty: %d" % sum_empty)
+    if args.rm_smallbox:
+        print("small boxes: %d" % sum_smallbox)
+    if args.rm_partkps:
+        print("part kps(vis<5): %d" % sum_partkps)
+    if args.rm_zerokps:
+        print("all zero kps: %d" % sum_zerokps)
+
+    if args.dump_imglist:
+        with open(imglist_filename, "w") as fid:
+            for line in dump_imglist:
+                fid.write(line + "\n")
+        print("dump imglist to %s" % imglist_filename)
+    print("saved in %s" % args.output)
+
+
+def _test():
+    img = cv2.imread(
+        "/home/users/min.du/data/testset/coco/val2017/000000000139.jpg"
+    )
+    boxes = np.array([[10, 10, 100, 100]], dtype=np.float32)
+    kps = np.array([[10, 10, 1, 100, 100, 1, 0]], dtype=np.float32)
+
+    rotated_angle = 20
+
+    img1shape = img.shape
+    img2 = rotate_image(img, rotated_angle)
+    img2shape = img2.shape
+
+    boxes2 = rotate_kps(boxes, rotated_angle, img1shape, img2shape)
+    kps2 = rotate_kps(kps, rotated_angle, img1shape, img2shape)
+    img3 = rotate_image(img2, -1 * rotated_angle)
+    boxes3 = rotate_kps(boxes2, -1 * rotated_angle, img2shape, img1shape)
+    kps3 = rotate_kps(kps2, -1 * rotated_angle, img2shape, img1shape)
+
+    bias_h = (img3.shape[0] - img.shape[0]) / 2
+    bias_w = (img3.shape[1] - img.shape[1]) / 2
+    img3 = img3[bias_h : img.shape[0] + bias_h, bias_w : img.shape[1] + bias_w]
+
+    img = cv2.circle(img, (int(kps[0, 0]), int(kps[0, 1])), 2, (0, 255, 0), 2)
+    img3 = cv2.circle(
+        img3, (int(kps3[0, 0]), int(kps3[0, 1])), 2, (0, 255, 0), 2
+    )
+
+    boxes = [int(x) for x in boxes[0]]
+    img = cv2.rectangle(
+        img, (boxes[0], boxes[1]), (boxes[2], boxes[3]), (0, 255, 0), 2
+    )
+    boxes = [int(x) for x in boxes2[0]]
+    img = cv2.rectangle(
+        img2, (boxes[0], boxes[1]), (boxes[2], boxes[3]), (0, 255, 0), 2
+    )
+    boxes = [int(x) for x in boxes3[0]]
+    img = cv2.rectangle(
+        img3, (boxes[0], boxes[1]), (boxes[2], boxes[3]), (0, 255, 0), 2
+    )
+
+    cv2.imshow("img", img)
+    cv2.imshow("img2", img2)
+    cv2.imshow("img3", img3)
+    ch = cv2.waitKey(0) & 0xFF
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Transform roidb")
+    parser.add_argument("roidb", type=str, help="input roidb")
+    parser.add_argument(
+        "--output", default=None, type=str, help="outout roidb, option"
+    )
+    parser.add_argument(
+        "--imglist", default=None, type=str, help="filter imglist"
+    )
+    parser.add_argument(
+        "--imgdir",
+        default=None,
+        type=str,
+        help="update imgdir in roi[image_name]",
+    )
+
+    parser.add_argument(
+        "--flip_box", default=None, type=str, help="box keyname to flip"
+    )
+    parser.add_argument(
+        "--flip_kps", default=None, type=str, help="kps keyname to flip"
+    )
+    parser.add_argument(
+        "--flip_feet", default=None, type=str, help="feet keyname to flip"
+    )
+    parser.add_argument(
+        "--rotate_angle", default=0, type=int, help="rotate angle"
+    )
+
+    parser.add_argument(
+        "--from-to",
+        dest="from_to",
+        default=None,
+        type=str,
+        help="transform method",
+    )
+    parser.add_argument(
+        "--notkeep",
+        dest="notkeep",
+        action="store_true",
+        help="if not keep old keyname",
+    )
+    parser.add_argument(
+        "--add_box_score",
+        dest="add_box_score",
+        action="store_true",
+        help="add boxes score",
+    )
+    parser.add_argument(
+        "--rm_box_score",
+        dest="rm_box_score",
+        action="store_true",
+        help="rm box score",
+    )
+    parser.add_argument(
+        "--rm_kps_score",
+        dest="rm_kps_score",
+        action="store_true",
+        help="description",
+    )
+    parser.add_argument(
+        "--rm_nohuman",
+        dest="rm_nohuman",
+        action="store_true",
+        help="rm nohuman roi",
+    )
+    parser.add_argument(
+        "--rm_zerokps",
+        dest="rm_zerokps",
+        action="store_true",
+        help="rm all zero kps",
+    )
+    parser.add_argument(
+        "--rm_smallbox",
+        dest="rm_smallbox",
+        action="store_true",
+        help="rm small box",
+    )
+    parser.add_argument(
+        "--rm_partkps",
+        dest="rm_partkps",
+        action="store_true",
+        help="rm vis(1,2)<5",
+    )
+    parser.add_argument(
+        "--rm_not_standing",
+        dest="rm_not_standing",
+        action="store_true",
+        help="rm not standing roi",
+    )
+    parser.add_argument(
+        "--rm_keynames", default=None, type=str, help="rm keyname provided"
+    )
+    parser.add_argument(
+        "--add_keynames",
+        default=None,
+        type=str,
+        help="add keyname to roidb, xxx.pkl,key1,key2",
+    )
+    parser.add_argument(
+        "--add_gt_classes",
+        dest="add_gt_classes",
+        action="store_true",
+        help="add gt_classes, all one",
+    )
+    parser.add_argument(
+        "--add_fake_pose",
+        dest="add_fake_pose",
+        action="store_true",
+        help="add fake pose, [-10000, -10000, -10000]",
+    )
+    parser.add_argument(
+        "--add_luid",
+        dest="add_luid",
+        action="store_true",
+        help="add luid to roi",
+    )
+
+    parser.add_argument(
+        "--rm_bad_boxes",
+        dest="rm_bad_boxes",
+        action="store_true",
+        help="rm bad boxes",
+    )
+    parser.add_argument(
+        "--rm_bad_feet",
+        dest="rm_bad_feet",
+        action="store_true",
+        help="description",
+    )
+    parser.add_argument(
+        "--rm_blank_in_imgname",
+        dest="rm_blank_in_imgname",
+        action="store_true",
+        help="rm blank in imgname",
+    )
+    parser.add_argument(
+        "--rm_not_jpg_imgname",
+        dest="rm_not_jpg_imgname",
+        action="store_true",
+        help="remove roi whose imgname if not jpg",
+    )
+    parser.add_argument(
+        "--rm_more_boxes",
+        dest="rm_more_boxes",
+        action="store_true",
+        help="remove more than one box",
+    )
+
+    parser.add_argument(
+        "--find_bad_feet",
+        dest="find_bad_feet",
+        action="store_true",
+        help="description",
+    )
+    parser.add_argument(
+        "--filter_by_kps_width_range",
+        default=None,
+        type=str,
+        help="filter roidb by kps custom",
+    )
+    parser.add_argument(
+        "--sample", default=None, type=int, help="uniform sample rois"
+    )
+    parser.add_argument(
+        "--dump_imglist",
+        dest="dump_imglist",
+        action="store_true",
+        help="dump imglist in roidb",
+    )
+    parser.add_argument(
+        "--no_size_check",
+        dest="no_size_check",
+        action="store_true",
+        help="check height/width in roidb, if not found, use identify",
+    )
+    parser.add_argument(
+        "--split_by_box_width",
+        default=None,
+        type=str,
+        help="split roidb by box width",
+    )
+    parser.add_argument(
+        "--repair_width_height",
+        dest="repair_width_height",
+        action="store_true",
+        help="repaire width and height value",
+    )
+    parser.add_argument(
+        "--repair_boxes_by_lmks",
+        dest="repair_boxes_by_lmks",
+        action="store_true",
+        help="put boxes to where lmks is",
+    )
+    parser.add_argument(
+        "--sort_by_imagename",
+        dest="sort_by_imagename",
+        action="store_true",
+        help="sort roidb by image name",
+    )
+    parser.add_argument(
+        "--attrlabel2bodytype",
+        dest="attrlabel2bodytype",
+        action="store_true",
+        help="convert attr_label to bodytype",
+    )
+    parser.add_argument(
+        "--keep-unique-imgname",
+        dest="keep_unique_imgname",
+        action="store_true",
+        help="keep unique image name",
+    )
+
+    # tmp-use
+    parser.add_argument(
+        "--clothes_landmarks",
+        dest="clothes_landmarks",
+        action="store_true",
+        help="filter by clothes_landmarks",
+    )
+    parser.add_argument(
+        "--choose_side_body",
+        dest="choose_side_body",
+        action="store_true",
+        help="choose side body",
+    )
+    args = parser.parse_args()
+    main(args)
+    # _test()

@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+import os
+import tempfile
+from typing import Optional
+
+from pdebug.otn import manager as otn_manager
+from pdebug.otn.single_node import SINGLE_NODE_CONFIG_TEMPLATE
+from pdebug.utils.fileio import load_python_config, run_with_print
+
+import typer
+
+app = typer.Typer()
+
+
+@app.command(
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
+def main(
+    ctx: typer.Context,
+    config_file: Optional[str] = typer.Option(
+        "piata_config.py", "-c", help="config file"
+    ),
+    loop: Optional[bool] = typer.Option(
+        False, help="run dag in loop, loading from __LOOP_PATH_LIST"
+    ),
+    skip_loop_cache: Optional[bool] = typer.Option(
+        False, help="run dag in loop, skip loop cache"
+    ),
+):
+    """Process data using piata.
+
+    Example:
+        >> piata-cli    # load default piata_config.py, if not exists, init one.
+        >> piata-cli --config-file xxx.py   # you can alse set config file path.
+        >> piata-cli -c xxx.py              # or -c for short name.
+        >> piata-cli --Input.path xxx.json --Input.name coco    # override params in config file.
+        >> piata-cli --config-file xxx.py --loop name:1,2,3
+    """
+    if not os.path.exists(config_file):
+        with open(config_file, "w") as fid:
+            fid.write(SINGLE_NODE_CONFIG_TEMPLATE)
+        typer.echo(
+            typer.style(f"Init config to {config_file}", fg=typer.colors.GREEN)
+        )
+        return
+
+    typer.echo(typer.style(f"loading {config_file}", fg=typer.colors.GREEN))
+    config = load_python_config(config_file, ctx.args)
+    for k, v in config.items():
+        if not k[0].isupper():
+            continue
+        typer.echo(typer.style(f"  {k}: {v}", fg=typer.colors.GREEN))
+
+    for path_i in config.get("__OTN_NODE_PATH__", []):
+        skip = config.get("__OTN_NODE_PATH_SKIP__", [])
+        skip.append(config_file)
+        skip = [os.path.abspath(i) for i in skip]
+        path_i = os.path.abspath(path_i)
+        otn_manager.NODE.find_node_from_folder(path_i, skip=skip)
+
+    if loop:
+        # TODO: debugging
+        assert (
+            "__LOOP_PATH_LIST" in config
+        ), "`__LOOP_PATH_LIST` not found in config, required by `--loop`"
+        path_list = config.pop("__LOOP_PATH_LIST")
+        temp_dir = config.pop("__LOOP_TEMP_DIR", "tmp_pipeline_config")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        typer.echo(typer.style(f"loop mode: ", fg=typer.colors.YELLOW))
+        for path_i in path_list:
+            typer.echo(typer.style(f"  {path_i}", fg=typer.colors.YELLOW))
+
+        for v in path_list:
+            key_str = 'Input["path"]'
+            lines = [
+                f"{key_str} = '{v}'\n" if l.startswith(f"{key_str} =") else l
+                for l in open(config_file, "r").readlines()
+            ]
+            # # remove __LOOP_*
+            # lines = [line for line in lines if not line.startswith("__LOOP_")]
+
+            new_config_file = f"{temp_dir}/{os.path.basename(v)}.py"
+            if os.path.exists(new_config_file) and (not skip_loop_cache):
+                typer.echo(
+                    typer.style(
+                        f"{v} has been processed, skip", fg=typer.colors.YELLOW
+                    )
+                )
+                continue
+            with open(new_config_file, "w") as fid:
+                fid.writelines(lines)
+            run_with_print(
+                ["python3", __file__, "-c", new_config_file],
+                get_return_from_cmd=False,
+            )
+        return
+
+    if config.get("Main", None) == "dag":
+        runner = otn_manager.create("dag")
+        typer.echo(typer.style("Run in DAG mode", fg=typer.colors.GREEN))
+    else:
+        runner = otn_manager.create("single_node")
+        typer.echo(
+            typer.style("Run in Single Node mode", fg=typer.colors.GREEN)
+        )
+    runner(config)
+
+
+if __name__ == "__main__":
+    app()

@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+import inspect
+import os
+from typing import Optional
+
+from pdebug.otn import manager as otn_manager
+from pdebug.utils.fileio import do_system
+
+import typer
+
+app = typer.Typer()
+
+
+EXAMPLES = [
+    (
+        "otn-cli --node vis_roidb --name coco --keys segmentation --mask-or-contour mask --output vis_result --path hardmining_coco.json --imgdir path_to_images",
+        "check semseg hardmining json",
+    ),
+    (
+        "otn-cli --node undistort_images --path cam5  --sensor-yaml mav0/cam5/sensor.yaml",
+        "undisort images",
+    ),
+    (
+        "otn-cli --node rgbd_semseg --path cam5_undistort --vis-output vis_pred --onnxfile /mnt/f/Downloads/rgbd_semseg_v1_6.onnx",
+        "run semseg onnx on images",
+    ),
+    (
+        "otn-cli --node vis_semseg_parquet --path ./20231103",
+        "visualize semseg parquet files.",
+    ),
+    (
+        "otn-cli --node concat_imgdir --path '' --imgdirs a,b,c --titles 1,2,3 --horizontal True",
+        "concat multiple image folders.",
+    ),
+    # run semseg on photoid badcase data
+    # >> photoid-helper predict-semantic-pcd ./photoid_data_recording <photoid_model_zoo> --badcase Screenshots
+]
+
+
+@app.command(
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
+def main(
+    ctx: typer.Context,
+    node: Optional[str] = typer.Option(None, help="node name to run"),
+    list_node: Optional[bool] = typer.Option(
+        None, help="list all avaliable nodes"
+    ),
+    help_node: Optional[bool] = typer.Option(None, help="show node func help"),
+    print_node_file: Optional[bool] = typer.Option(
+        None, help="show node func help"
+    ),
+    force_single_process: Optional[bool] = typer.Option(
+        None, help="force run node in main process"
+    ),
+):
+    """Run single node in cli.
+
+    Example:
+        >> otn-cli --node xxx --args_to_node
+    """
+    if list_node:
+        node_info = repr(otn_manager.NODE)
+        print(node_info)
+        return
+
+    if not node:
+        typer.echo(
+            typer.style(f"please set node by --node", fg=typer.colors.GREEN)
+        )
+        return
+
+    if not node in otn_manager.NODE:
+        raise RuntimeError(f"no found {node}, please check node name.")
+
+    node_func = otn_manager.create(node)
+
+    if help_node:
+        signature_obj = inspect.signature(node_func)
+        parameters = signature_obj.parameters
+        typer.echo(
+            typer.style(f"======= {node} info =======", fg=typer.colors.GREEN)
+        )
+        for k, v in parameters.items():
+            print(f"  {v}")
+        return
+
+    if print_node_file:
+        filepath = inspect.getsourcefile(node_func)
+        print(filepath)
+        return
+
+    node_kwargs = {}
+    assert len(ctx.args) % 2 == 0
+    extra_args = {
+        k: ctx.args[_i + 1] for _i, k in enumerate(ctx.args) if _i % 2 == 0
+    }
+
+    key_type = {}
+    cli2args = lambda x: x.split("--")[1].replace("-", "_")
+    args2cli = lambda x: "--" + x.replace("_", "-")
+
+    for k, v in extra_args.items():
+        assert k.startswith("--"), f"{k} should startswith --"
+        k_name = cli2args(k)
+        type_func = node_func.__annotations__.get(k_name, None)
+        key_type[k_name] = type_func
+
+        if type_func:
+            if type_func is bool:
+                v = v in ["1", "True", "true"]
+            else:
+                v = type_func(v)
+        node_kwargs[k_name] = v
+
+    if not force_single_process:
+        force_single_process = os.getenv("OTN_RETRY", "0") == "0"
+
+    if force_single_process:
+        node_func(**node_kwargs)
+    else:
+        filepath = inspect.getsourcefile(node_func)
+        __main__lines = []
+        __main__defined = False
+        node_is_main = False
+        for line in open(filepath):
+            if "__name__" in line and "==" in line and "__main__" in line:
+                __main__defined = True
+            if __main__defined:
+                if node_func.__name__ in line:
+                    node_is_main = True
+                    break
+
+        if node_is_main:
+            # Run node in multiprocess, to support trials
+            # Only work when node_func is called in __main__
+            cmd = f"python3 {filepath}"
+
+            sig = inspect.signature(node_func)
+            required = []
+            for param_name, param in sig.parameters.items():
+                if (
+                    param.default is inspect.Parameter.empty
+                    and param.kind != inspect.Parameter.VAR_POSITIONAL
+                    and param.kind != inspect.Parameter.VAR_KEYWORD
+                ):
+                    required.append(param_name)
+
+            for req_name in required:
+                __req_name = args2cli(req_name)
+                assert (
+                    __req_name in extra_args
+                ), f"{__req_name} not found in {extra_args}"
+
+                required_value = extra_args.pop(__req_name)
+                if key_type.get(req_name, None) == str:
+                    cmd += f" '{required_value}'"
+                elif key_type.get(req_name, None) == bool:
+                    if required_value in ["1", "True", "true"]:
+                        cmd += f" {__req_name}"
+                    else:
+                        cmd += f" {__req_name.replace('--', '--no-')}"
+                else:
+                    cmd += f" {required_value}"
+
+            for k, v in extra_args.items():
+                if key_type.get(cli2args(k), None) == str:
+                    cmd += f" {k} '{v}'"
+                elif key_type.get(cli2args(k), None) == bool:
+                    if v in ["1", "True", "true"]:
+                        cmd += f" {k}"
+                    else:
+                        cmd += f" {k.replace('--', '--no-')}"
+                else:
+                    cmd += f" {k} {v}"
+            do_system(cmd, trials=10)
+        else:
+            node_func(**node_kwargs)
+
+
+if __name__ == "__main__":
+    app()

@@ -1,0 +1,180 @@
+[project]
+name = "pdebug"
+version = "0.0.2"
+description = "Debug toolkit."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+  "fvcore",
+  "easydict",
+  "numpy",
+  "opencv-python",
+  "matplotlib",
+  "prettytable",
+  "typer",
+]
+
+[project.scripts]
+runnb = "pdebug.runnb.runnb:main"
+
+[project.optional-dependencies]
+runnb = ["toml", "hydra-core", "jupytext"]
+piata = ["scipy", "pycocotools", "json_tricks", "pylance"]
+scripts = ["toml"]
+pdag = ["toposort", "cachetools"]
+pimo = ["loguru", "dataclasses_json", "imantics"]
+visp = ["rerun-sdk==0.23.3"]
+otn = ["colorama", "tabulate", "pandas", "trimesh", "imageio", "accelerate", "transformers"]
+all = ["toml", "typer", "hydra-core", "jupytext",
+        "scipy", "pycocotools", "json_tricks", "pylance",
+        "toposort", "cachetools", "loguru", "dataclasses_json", "imantics", "rerun-sdk==0.23.3",
+        "prettytable", "fvcore", "easydict", "numpy", "matplotlib",
+        "colorama", "tabulate", "mmcv-lite", "pandas", "trimesh", "imageio"
+        ] 
+dev = ["coverage",
+        "pytest",
+        "pytest-xdist",
+        "pytest-pythonpath",
+        "pytest-cov",
+        "pytest-html",
+        "pytest-repeat",
+        "pytest-watch",
+        "pre-commit==2.13.0",
+        "pre-commit-hooks==4.0.1",
+        "isort==5.6.4",
+        "flake8==3.9.2",
+        "flake8-bugbear==21.4.3",
+        "flake8-comprehensions==3.6.0",
+        "black==22.3.0",
+        "pydocstyle==6.1.1",
+        "pep8-naming==0.12.1",
+        "mypy==0.910",
+        ]
+
+[tool.mypy]
+files = ["sample"]
+disallow_untyped_defs = "True"
+ignore_missing_imports = "True"
+show_error_codes = "True"
+warn_redundant_casts = "True"
+warn_unused_configs = "True"
+warn_unused_ignores = "True"
+allow_redefinition = "True"
+follow_imports = "silent"
+follow_imports_for_stubs = "True"
+exclude = []
+
+# TODO: Fix typing for these modules
+[[tool.mypy.overrides]]
+module = [
+]
+ignore_errors = "True"
+
+
+[[tool.mypy.overrides]]
+module = [
+]
+ignore_errors = "False"
+
+[tool.pytest.ini_options]
+norecursedirs = [
+    ".git",
+    "dist",
+    "build",
+]
+python_files = [
+    "test_*.py",
+]
+addopts = [
+    "--strict-markers",
+    "--doctest-modules",
+    "--color=yes",
+    "--durations=10",
+]
+junit_duration_report = "call"
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no-cover",
+    "warnings",
+    "pass",
+    "rank_zero_warn",
+    "raise NotImplementedError",
+]
+
+[tool.isort]
+profile = "black"
+line_length = 79
+known_third_party = [
+    "PIL",
+    "addict",
+    "easydict",
+    "fsspec",
+    "lmdb",
+    "msgpack",
+    "numpy",
+    "cv2",
+    "pycocotools",
+    "pytest",
+    "scipy",
+    "six",
+    "termcolor",
+    "torch",
+    "torchvision",
+    "yaml",
+]
+known_locals = "utilities"
+no_lines_before = [
+    "STDLIB",
+    "LOCALFOLDER",
+]
+sections = [
+    "FUTURE",
+    "STDLIB",
+    "FIRSTPARTY",
+    "THIRDPARTY",
+    "LOCALS",
+    "LOCALFOLDER",
+]
+skip_glob = [
+    "docs/*",
+    "3rdparty/*",
+    "tmp_*",
+]
+
+[tool.yapf]
+based_on_style = "pep8"
+SPACES_AROUND_POWER_OPERATOR = true
+DEDENT_CLOSING_BRACKETS = true
+BLANK_LINE_BEFORE_NESTED_CLASS_OR_DEF = true
+
+[tool.flake8]
+max-line-length = 79
+exclude = ["docs/*"]
+per-file-ignores = [
+    "__init__.py: F401, F403",
+]
+select = [
+    "E",
+    "W",
+    "F",
+]
+verbose = 2
+format = "pylint"
+extend-ignore = [
+    "E731",
+    "E203",
+]
+
+[tool.pydocstyle]
+convention = "pep257"
+add-ignore = [
+    "D104",
+    "D107",
+    "D202",
+    "D105",
+    "D100",
+    "D102",
+    "D103",
+    "D101",
+]

@@ -1,0 +1,68 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import json
+import os
+import pickle
+import sys
+
+import numpy as np
+
+if len(sys.argv) < 2:
+    print("Usage: jsonloader [json] [option, ipy | keyname | $imagename]")
+    sys.exit(0)
+
+try:
+    fid = open(sys.argv[1], "r")
+except Exception as e:
+    fid = open(sys.argv[1], "rb")
+
+if sys.argv[1].endswith(".json"):
+    try:
+        var = json.load(fid)
+    except Exception as e:
+        print("Bad json file, exit")
+        sys.exit(0)
+elif sys.argv[1].endswith(".pkl"):
+    var = pickle.load(fid)
+fid.close()
+
+if isinstance(var, list):
+    print("list, ", len(var))
+elif isinstance(var, dict):
+    print("dict", var.keys())
+else:
+    print(type(var))
+
+if sys.argv[1].endswith(".pkl") and isinstance(var, list):
+    sum_roi = 0
+    keyname = None
+    if "boxes" in var[0]:
+        keyname = "boxes"
+    elif "pred_kps" in var[0]:
+        keyname = "pred_kps"
+    elif "keypoints" in var[0]:
+        keyname = "keypoints"
+    if keyname is not None:
+        for roi in var:
+            sum_roi += roi[keyname].shape[0]
+        print("num boxes: %d" % sum_roi)
+
+if len(sys.argv) >= 3:
+    if "ipy" in sys.argv[2]:
+        print("play with var")
+    elif "keyname" in sys.argv[2]:
+        print(var[0].keys())
+        import sys
+
+        sys.exit()
+    else:
+        print("play with var")
+        a = [x for x in var if sys.argv[2] in x["image"]]
+        if len(a) == 0:
+            print("%s not found in %s" % (sys.argv[2], sys.argv[1]))
+            sys.exit()
+        print("play with a['image'] == %s" % sys.argv[2])
+        a = a[0]
+    print(" ")
+    __import__("IPython").embed()

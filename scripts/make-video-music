@@ -1,0 +1,43 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+Add music to video.
+"""
+
+from __future__ import print_function
+import argparse
+import os
+
+try:
+    from wyy import utils
+except ImportError as e:
+    print("please pip install wyy first.")
+    import sys
+
+    sys.exit()
+
+
+def main(args):
+    if args.output is None:
+        args.output = (
+            os.path.splitext(args.input)[0]
+            + "_music"
+            + os.path.splitext(args.input)[1]
+        )
+    utils.add_music_to_video(args.music_from, args.input)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("input", type=str, help="input")
+    parser.add_argument(
+        "--music-from",
+        dest="music_from",
+        default=None,
+        type=str,
+        help="music from this video",
+    )
+    parser.add_argument("--output", default=None, type=str, help="output")
+    args = parser.parse_args()
+    main(args)

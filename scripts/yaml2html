@@ -1,0 +1,30 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+import os
+
+import yaml
+
+try:
+    from json2html import json2html
+except Exception as e:
+    os.system("pip install json2html")
+    from json2html import json2html
+
+
+def main(args):
+    with open(args.input, "r") as fid:
+        config = yaml.load(fid, Loader=yaml.SafeLoader)
+    html = json2html.convert(json=config)
+    with open(args.output, "w") as fid:
+        fid.write(html)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="yaml to html")
+    parser.add_argument("input", type=str, help="input yaml")
+    parser.add_argument("output", type=str, help="description")
+    args = parser.parse_args()
+    main(args)
