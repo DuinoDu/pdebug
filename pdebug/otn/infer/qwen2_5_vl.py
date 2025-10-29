@@ -65,6 +65,50 @@ def _load_qwen_model():
     return model, processor
 
 
+_original_qwen_clear = _load_qwen_model.cache_clear
+
+
+def _qwen_cache_clear() -> None:
+    if _load_qwen_model.cache_info().currsize:
+        try:
+            model, _ = _load_qwen_model()
+            if TORCH_INSTALLED:
+                import torch
+                import gc
+
+                if torch.cuda.is_available():
+                    try:
+                        model.to("cpu")  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    try:
+                        torch.cuda.empty_cache()
+                        ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+                        if callable(ipc_collect):
+                            ipc_collect()
+                    except Exception:
+                        pass
+                del model
+                gc.collect()
+        except Exception:
+            pass
+    _original_qwen_clear()
+    if TORCH_INSTALLED:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+                if callable(ipc_collect):
+                    ipc_collect()
+        except Exception:
+            pass
+
+
+_load_qwen_model.cache_clear = _qwen_cache_clear  # type: ignore[assignment]
+
+
 def _normalize_tags(text: str) -> List[str]:
     if not text:
         return []

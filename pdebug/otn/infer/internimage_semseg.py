@@ -1,13 +1,14 @@
 import os
 import shutil
 import sys
+from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input, Output
 from pdebug.utils import install_x
-from pdebug.utils.env import HUGGINGFACE_HUB_INSTALLED
+from pdebug.utils.env import HUGGINGFACE_HUB_INSTALLED, TORCH_INSTALLED
 from pdebug.utils.fileio import do_system, download_file
 from pdebug.visp import draw
 
@@ -20,7 +21,13 @@ if HUGGINGFACE_HUB_INSTALLED:
     from huggingface_hub import hf_hub_download
 
 
-__all__ = ["init_model", "prepare", "COLOR_PALETTE", "ADE_CLASSES"]
+__all__ = [
+    "init_model",
+    "prepare",
+    "COLOR_PALETTE",
+    "ADE_CLASSES",
+    "_load_internimage_model",
+]
 
 
 def patch_for_mmcv():
@@ -73,6 +80,30 @@ def prepare():
     return repo_path
 
 
+@lru_cache(maxsize=1)
+def _cached_repo_path() -> str:
+    return prepare()
+
+
+@lru_cache(maxsize=1)
+def _cached_internimage_model(
+    model_type: str = "big", device: str = "cuda:0"
+) -> Tuple[object, object, object]:
+    repo = _cached_repo_path()
+    model, inference_segmentor, color_palette = init_model(
+        repo, model_type, device
+    )
+    global COLOR_PALETTE
+    COLOR_PALETTE = color_palette
+    return model, inference_segmentor, color_palette
+
+
+def _load_internimage_model(
+    model_type: str = "big", device: str = "cuda:0"
+) -> Tuple[object, object, object]:
+    return _cached_internimage_model(model_type, device)
+
+
 def init_model(repo: str, model_type: str = "small", device: str = "cuda:0"):
 
     import mmcv_custom
@@ -123,6 +154,52 @@ def init_model(repo: str, model_type: str = "small", device: str = "cuda:0"):
     else:
         model.CLASSES = get_classes(args.palette)
     return model, inference_segmentor, color_palette
+
+
+_original_cached_model_clear = _cached_internimage_model.cache_clear
+
+
+def _internimage_cache_clear() -> None:
+    if _cached_internimage_model.cache_info().currsize:
+        try:
+            model, _, _ = _cached_internimage_model()
+            if TORCH_INSTALLED:
+                import torch
+                import gc
+
+                if torch.cuda.is_available():
+                    try:
+                        if hasattr(model, "to"):
+                            model.to("cpu")
+                    except Exception:
+                        pass
+                    try:
+                        torch.cuda.empty_cache()
+                        ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+                        if callable(ipc_collect):
+                            ipc_collect()
+                    except Exception:
+                        pass
+                del model
+                gc.collect()
+        except Exception:
+            pass
+    _original_cached_model_clear()
+    if TORCH_INSTALLED:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+                if callable(ipc_collect):
+                    ipc_collect()
+        except Exception:
+            pass
+
+
+_cached_internimage_model.cache_clear = _internimage_cache_clear  # type: ignore[assignment]
+_load_internimage_model.cache_clear = _cached_internimage_model.cache_clear  # type: ignore[attr-defined]
 
 
 @otn_manager.NODE.register(name="internimage_semseg")

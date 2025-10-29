@@ -98,6 +98,50 @@ def _load_groundingdino_model():
     return model, processor, settings
 
 
+_original_grounding_clear = _load_groundingdino_model.cache_clear
+
+
+def _grounding_cache_clear() -> None:
+    if _load_groundingdino_model.cache_info().currsize:
+        try:
+            model, _, _ = _load_groundingdino_model()
+            if TORCH_INSTALLED:
+                import torch
+                import gc
+
+                if torch.cuda.is_available():
+                    try:
+                        model.to("cpu")  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    try:
+                        torch.cuda.empty_cache()
+                        ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+                        if callable(ipc_collect):
+                            ipc_collect()
+                    except Exception:
+                        pass
+                del model
+                gc.collect()
+        except Exception:
+            pass
+    _original_grounding_clear()
+    if TORCH_INSTALLED:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+                if callable(ipc_collect):
+                    ipc_collect()
+        except Exception:
+            pass
+
+
+_load_groundingdino_model.cache_clear = _grounding_cache_clear  # type: ignore[assignment]
+
+
 def _grounding_infer(
     image, *, index: int, unittest: bool
 ) -> Dict[str, object]:

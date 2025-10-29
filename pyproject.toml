@@ -12,6 +12,9 @@ dependencies = [
   "matplotlib",
   "prettytable",
   "typer",
+  "loguru",
+  "dataclasses_json",
+  "imantics",
 ]
 
 [project.scripts]
@@ -25,7 +28,6 @@ runnb = ["toml", "hydra-core", "jupytext"]
 piata = ["scipy", "pycocotools", "json_tricks", "pylance"]
 scripts = ["toml"]
 pdag = ["toposort", "cachetools"]
-pimo = ["loguru", "dataclasses_json", "imantics"]
 visp = ["rerun-sdk==0.23.3"]
 otn = ["colorama", "tabulate", "pandas", "trimesh", "imageio", "accelerate", "transformers", "qwen_vl_utils"]
 all = ["toml", "typer", "hydra-core", "jupytext",

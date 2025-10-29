@@ -11,10 +11,11 @@ Install env steps:
 
 from __future__ import annotations
 import gc
+import io
 import math
 import shutil
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from pdebug.otn.infer import groundingdino_node as groundingdino_module
 from pdebug.otn.infer import internimage_semseg as semseg_module
@@ -22,13 +23,11 @@ from pdebug.otn.infer import ml_depth_pro_node as ml_depth_pro_module
 from pdebug.otn.infer import moondream_node as moondream_module
 from pdebug.otn.infer import qwen2_5_vl
 from pdebug.otn.infer.lance_utils import (
-    bbox_from_mask,
+    LanceBatch,
     compute_image_stats,
     decode_bitmask,
     decode_depth_map,
-    encode_bitmask,
     load_lance_batch,
-    segmentation_stub,
 )
 from pdebug.utils.gpu_memory import gpu_memory_tic, gpu_memory_toc
 
@@ -36,6 +35,7 @@ import cv2
 import numpy as np
 import pyarrow as pa
 import typer
+from loguru import logger
 
 try:  # torch is optional; required for full inference
     import torch
@@ -94,18 +94,206 @@ def _append_columns(table: pa.Table, columns: Dict[str, pa.Array]) -> pa.Table:
     return updated
 
 
-_VIS_GRID_ROWS = 3
-_VIS_GRID_COLS = 2
+def _ensure_bytes(value: object) -> bytes:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, bytearray):
+        return bytes(value)
+    if isinstance(value, memoryview):
+        return value.tobytes()
+    raise TypeError(f"Unsupported image storage type: {type(value)}")
 
 
-def _write_lance_dataset(table: pa.Table, output_path: Path) -> Path:
+def _decode_lance_image(buffer: bytes, *, to_rgb: bool = True) -> np.ndarray:
+    if buffer is None:
+        raise ValueError("Encountered empty image buffer when decoding Lance data.")
+    if Image is not None:
+        with Image.open(io.BytesIO(buffer)) as handle:
+            frame = np.asarray(handle.convert("RGB"))
+    else:
+        if cv2 is None:
+            raise RuntimeError(
+                "Decoding Lance images requires pillow or opencv-python to be installed."
+            )
+        frame = cv2.imdecode(np.frombuffer(buffer, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError("Failed to decode image buffer via OpenCV.")
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    if not to_rgb and frame.ndim == 3:
+        if cv2 is not None:
+            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        return frame[..., ::-1]
+    return frame
+
+
+def _timestamp_to_seconds(
+    timestamp_value: object, frame_number: int
+) -> Optional[float]:
+    if timestamp_value is None:
+        return frame_number / 30.0
+    if isinstance(timestamp_value, float):
+        return timestamp_value
+    if isinstance(timestamp_value, int):
+        if abs(timestamp_value) > 10_000_000_000:
+            return timestamp_value / 1_000_000_000.0
+        return float(timestamp_value)
+    return None
+
+
+def _cuda_warmup() -> None:
+    if torch is None:
+        return
+    try:
+        if not torch.cuda.is_available():
+            return
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+        if callable(ipc_collect):
+            ipc_collect()
+    except Exception:
+        pass
+
+
+def _table_to_lance_batch(
+    table: pa.Table,
+    *,
+    image_col: str,
+    timestamp_col: Optional[str],
+    video_id_col: Optional[str],
+    frame_num_col: Optional[str],
+    index_offset: int,
+) -> LanceBatch:
+    images: List[np.ndarray] = []
+    metadata: List[Dict[str, object]] = []
+
+    for row_idx in range(len(table)):
+        row = table.slice(row_idx, 1)
+        entry: Dict[str, object] = {}
+        for name in row.column_names:
+            cell = row[name][0]
+            value = cell.as_py() if hasattr(cell, "as_py") else cell
+            entry[name] = value
+
+        if image_col not in entry:
+            raise KeyError(f"Column '{image_col}' missing from Lance batch slice.")
+
+        buffer = _ensure_bytes(entry.pop(image_col))
+        image = _decode_lance_image(buffer)
+        entry["image"] = image
+        entry["image_height"], entry["image_width"] = image.shape[:2]
+
+        frame_index = index_offset + row_idx
+        entry["frame_index"] = frame_index
+
+        image_name = entry.get("image_name")
+        if not image_name:
+            entry["image_name"] = f"lance_{frame_index:06d}.png"
+
+        frame_number = entry.get(frame_num_col) if frame_num_col else None
+        if frame_number is None:
+            frame_number = frame_index
+        entry["frame_number_resolved"] = int(frame_number)
+
+        source_video = entry.get(video_id_col) if video_id_col else None
+        if source_video is None:
+            source_video = entry.get("source_video_id_resolved") or "lance_vita"
+        entry["source_video_id_resolved"] = str(source_video)
+
+        timestamp_raw = entry.get(timestamp_col) if timestamp_col else entry.get(
+            "timestamp_raw"
+        )
+        entry["timestamp_raw"] = timestamp_raw
+        entry["timestamp_seconds"] = _timestamp_to_seconds(
+            timestamp_raw, entry["frame_number_resolved"]
+        )
+
+        metadata.append(entry)
+        images.append(image)
+
+    return LanceBatch(table=table, images=images, metadata=metadata)
+
+
+def _iter_lance_batches(
+    dataset_path: Path,
+    *,
+    image_col: str,
+    reader_kwargs: Dict[str, object],
+    batch_size: Optional[int],
+    timestamp_col: Optional[str],
+    video_id_col: Optional[str],
+    frame_num_col: Optional[str],
+) -> Iterator[LanceBatch]:
     import lance
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    if output_path.exists():
-        shutil.rmtree(output_path)
-    lance.write_dataset(table, str(output_path))
-    return output_path
+    scanner_kwargs: Dict[str, object] = {}
+    columns = reader_kwargs.get("columns")
+    if columns:
+        scanner_kwargs["columns"] = columns
+    if batch_size and batch_size > 0:
+        scanner_kwargs["batch_size"] = int(batch_size)
+
+    ds = lance.dataset(str(dataset_path))
+    scanner = ds.scanner(**scanner_kwargs)
+
+    processed = 0
+    row_limit = reader_kwargs.get("row_limit")
+    limit_value = int(row_limit) if row_limit is not None else None
+
+    for record_batch in scanner.to_batches():
+        table = pa.Table.from_batches([record_batch]).combine_chunks()
+        if limit_value is not None:
+            rows_remaining = limit_value - processed
+            if rows_remaining <= 0:
+                break
+            if len(table) > rows_remaining:
+                table = table.slice(0, rows_remaining)
+
+        if len(table) == 0:
+            continue
+
+        batch = _table_to_lance_batch(
+            table,
+            image_col=image_col,
+            timestamp_col=timestamp_col,
+            video_id_col=video_id_col,
+            frame_num_col=frame_num_col,
+            index_offset=processed,
+        )
+
+        yield batch
+        processed += len(batch.images)
+
+        if limit_value is not None and processed >= limit_value:
+            break
+
+
+class LanceDatasetWriter:
+    def __init__(self, output_path: Path) -> None:
+        self.output_path = output_path
+        self._dataset = None
+        self._initialized = False
+
+    def write_batch(self, table: pa.Table) -> None:
+        if len(table) == 0:
+            return
+
+        import lance
+
+        if not self._initialized:
+            if self.output_path.exists():
+                shutil.rmtree(self.output_path)
+            lance.write_dataset(table, str(self.output_path))
+            self._dataset = lance.dataset(str(self.output_path))
+            self._initialized = True
+            return
+
+        if self._dataset is None:
+            self._dataset = lance.dataset(str(self.output_path))
+        self._dataset.insert(table, mode="append")
+
+_VIS_GRID_ROWS = 3
+_VIS_GRID_COLS = 2
 
 
 def _preview_rows(table: pa.Table, limit: int = 3) -> None:
@@ -235,11 +423,27 @@ def _run_segmentation(
 ) -> List[Dict[str, object]]:
 
     results: List[Dict[str, object]] = []
-
-    repo = semseg_module.prepare()
-    model, infer_func, _ = semseg_module.init_model(repo, "big", "cuda:0")
+    model_bundle: Optional[Tuple[object, object, object]] = None
+    if not unittest:
+        model_bundle = semseg_module._load_internimage_model("big", "cuda:0")
 
     for image in images:
+        if unittest:
+            height, width = image.shape[:2]
+            mask = np.zeros((height, width), dtype=np.uint8)
+            mask[: height // 2 or 1, : width // 2 or 1] = 1
+            results.append(
+                {
+                    "mask": mask.reshape(-1),
+                    "model": "internimage_DCNv4_stub",
+                    "shape": mask.shape,
+                }
+            )
+            continue
+
+        if model_bundle is None:
+            raise RuntimeError("Failed to load InternImage segmentation model.")
+        model, infer_func, _ = model_bundle
         result = infer_func(model, image)[0]
         results.append(
             {
@@ -588,6 +792,12 @@ def main(
         min=1,
         help="Limit the number of rows processed from the dataset.",
     ),
+    batch_size: Optional[int] = typer.Option(
+        None,
+        "--batch-size",
+        min=1,
+        help="Number of rows to materialize per batch.",
+    ),
     unittest: bool = typer.Option(
         False,
         "--unittest/--no-unittest",
@@ -618,84 +828,241 @@ def main(
         row_limit=row_limit,
     )
 
-    typer.echo(f"Loading Lance dataset from {dataset_path} ...")
-    batch = load_lance_batch(
-        dataset_path,
-        image_col=image_col,
-        reader_kwargs=reader_kwargs,
+    typer.echo(f"Scanning Lance dataset from {dataset_path} ...")
+    import lance
+
+    ds = lance.dataset(str(dataset_path))
+    total_rows = ds.count_rows()
+    if row_limit is not None:
+        total_rows = min(int(row_limit), total_rows)
+    if total_rows <= 0:
+        raise RuntimeError(
+            f"No images found in Lance dataset {dataset_path}"
+        )
+    del ds
+
+    effective_batch_size = (
+        int(batch_size) if batch_size is not None else total_rows
     )
-    if not batch.images:
-        raise RuntimeError(f"No images found in Lance dataset {dataset_path}")
-    typer.echo(f"Processing {len(batch.images)} rows.")
+    if effective_batch_size <= 0:
+        effective_batch_size = total_rows
+    effective_batch_size = max(1, min(effective_batch_size, total_rows))
 
-    prompt = qwen_prompt or qwen2_5_vl.DEFAULT_TEXT
+    typer.echo(
+        f"Processing {total_rows} rows in batches of {effective_batch_size}."
+    )
+    def iter_batches() -> Iterator[LanceBatch]:
+        return _iter_lance_batches(
+            dataset_path,
+            image_col=image_col,
+            reader_kwargs=reader_kwargs,
+            batch_size=effective_batch_size,
+            timestamp_col=timestamp_col,
+            video_id_col=video_id_col,
+            frame_num_col=frame_num_col,
+        )
 
+    _cuda_warmup()
+
+    # Stage 1: Caption
     typer.echo("Running Moondream caption inference ...")
     caption_before = gpu_memory_tic()
-    caption_results = _run_caption(batch.images, unittest=unittest)
+    caption_results: List[Dict[str, object]] = []
+    processed = 0
+    for batch in iter_batches():
+        logger.info(f"[Moondream] {processed} / {total_rows}")
+        if not batch.images:
+            del batch
+            continue
+        caption_results.extend(_run_caption(batch.images, unittest=unittest))
+        processed += len(batch.images)
+        del batch
+        gc.collect()
+    if processed != total_rows:
+        raise RuntimeError(
+            "Caption stage processed an unexpected number of rows."
+        )
     gpu_memory_toc(
         "Moondream caption inference",
         caption_before,
         (getattr(moondream_module, "_load_moondream_model", None),),
     )
 
+    # Stage 2: Listing
     typer.echo("Running Qwen2.5-VL listing inference ...")
+    prompt = qwen_prompt or qwen2_5_vl.DEFAULT_TEXT
     listing_before = gpu_memory_tic()
-    listing_results = _run_listing(
-        batch.images, unittest=unittest, prompt=prompt
-    )
+    listing_results: List[Dict[str, object]] = []
+    processed = 0
+    for batch in iter_batches():
+        logger.info(f"[Qwen2.5-VL] {processed} / {total_rows}")
+        if not batch.images:
+            del batch
+            continue
+        listing_results.extend(
+            _run_listing(batch.images, unittest=unittest, prompt=prompt)
+        )
+        processed += len(batch.images)
+        del batch
+        gc.collect()
+    if processed != total_rows:
+        raise RuntimeError(
+            "Listing stage processed an unexpected number of rows."
+        )
     gpu_memory_toc(
         "Qwen2.5-VL listing inference",
         listing_before,
         (getattr(qwen2_5_vl, "_load_qwen_model", None),),
     )
 
+    # Stage 3: Detection (depends on listing results)
     typer.echo("Running GroundingDINO detection with listing prompts ...")
     detection_before = gpu_memory_tic()
-    detection_results = _run_detection(
-        batch.images, listing_results, unittest=unittest
-    )
+    detection_results: List[Dict[str, object]] = []
+    processed = 0
+    for batch in iter_batches():
+        logger.info(f"[GroundingDINO] {processed} / {total_rows}")
+        if not batch.images:
+            del batch
+            continue
+        span = len(batch.images)
+        listing_slice = listing_results[processed : processed + span]
+        detection_results.extend(
+            _run_detection(batch.images, listing_slice, unittest=unittest)
+        )
+        processed += span
+        del batch
+        gc.collect()
+    if processed != total_rows:
+        raise RuntimeError(
+            "Detection stage processed an unexpected number of rows."
+        )
     gpu_memory_toc(
         "GroundingDINO detection",
         detection_before,
         (getattr(groundingdino_module, "_load_groundingdino_model", None),),
     )
 
-    typer.echo("Running InternImage seg ...")
+    # Stage 4: Segmentation
+    typer.echo("Running InternImage segmentation ...")
     segmentation_before = gpu_memory_tic()
-    segmentation_results = _run_segmentation(batch.images, unittest=unittest)
+    segmentation_results: List[Dict[str, object]] = []
+    processed = 0
+    for batch in iter_batches():
+        logger.info(f"[Internimage] {processed} / {total_rows}")
+        if not batch.images:
+            del batch
+            continue
+        segmentation_results.extend(
+            _run_segmentation(batch.images, unittest=unittest)
+        )
+        processed += len(batch.images)
+        del batch
+        gc.collect()
+    if processed != total_rows:
+        raise RuntimeError(
+            "Segmentation stage processed an unexpected number of rows."
+        )
     gpu_memory_toc(
         "Internimage segmentation",
         segmentation_before,
         (getattr(semseg_module, "_load_internimage_model", None),),
     )
 
+    # Stage 5: Depth
     typer.echo("Running ML-Depth-Pro depth estimation ...")
     depth_before = gpu_memory_tic()
     depth_results: List[Dict[str, object]] = []
-    for image in batch.images:
-        depth_results.append(ml_depth_pro_module._depth_infer(image, unittest=unittest))  # type: ignore[attr-defined]
+    processed = 0
+    for batch in iter_batches():
+        logger.info(f"[ML-Depth-Pro] {processed} / {total_rows}")
+        if not batch.images:
+            del batch
+            continue
+        for image in batch.images:
+            depth_results.append(  # type: ignore[attr-defined]
+                ml_depth_pro_module._depth_infer(image, unittest=unittest)
+            )
+        processed += len(batch.images)
+        del batch
+        gc.collect()
+    if processed != total_rows:
+        raise RuntimeError(
+            "Depth stage processed an unexpected number of rows."
+        )
     gpu_memory_toc(
         "ML-Depth-Pro depth estimation",
         depth_before,
         (getattr(ml_depth_pro_module, "_load_depth_pro_model", None),),
     )
 
-    column_map = {
-        "cortexia_caption": _dicts_to_struct_array(caption_results),
-        "cortexia_tags": _dicts_to_struct_array(listing_results),
-        "cortexia_detection": _dicts_to_struct_array(detection_results),
-        "cortexia_segmentation": _dicts_to_struct_array(segmentation_results),
-        "cortexia_depth": _dicts_to_struct_array(depth_results),
-    }
+    # Final write pass aggregating all stage outputs
+    writer = LanceDatasetWriter(output_dataset)
+    preview_tables: List[pa.Table] = []
+    preview_remaining = 3
+    processed = 0
+    for batch_index, batch in enumerate(iter_batches(), start=1):
+        table = batch.table
+        span = len(table)
+        if span == 0:
+            del batch
+            continue
 
-    annotated = _append_columns(batch.table, column_map)
-    typer.echo(f"Writing annotated dataset to {output_dataset} ...")
-    _write_lance_dataset(annotated, output_dataset)
+        column_map = {
+            "cortexia_caption": _dicts_to_struct_array(
+                caption_results[processed : processed + span]
+            ),
+            "cortexia_tags": _dicts_to_struct_array(
+                listing_results[processed : processed + span]
+            ),
+            "cortexia_detection": _dicts_to_struct_array(
+                detection_results[processed : processed + span]
+            ),
+            "cortexia_segmentation": _dicts_to_struct_array(
+                segmentation_results[processed : processed + span]
+            ),
+            "cortexia_depth": _dicts_to_struct_array(
+                depth_results[processed : processed + span]
+            ),
+        }
+
+        annotated = _append_columns(table, column_map)
+        writer.write_batch(annotated)
+
+        if preview_remaining > 0:
+            take = min(preview_remaining, len(annotated))
+            if take > 0:
+                preview_tables.append(annotated.slice(0, take))
+                preview_remaining -= take
+
+        processed += span
+        typer.echo(
+            f"Completed batch {batch_index}: {processed}/{total_rows} rows written."
+        )
+
+        del batch
+        gc.collect()
+
+    if processed != total_rows:
+        raise RuntimeError(
+            "Final write pass processed an unexpected number of rows."
+        )
+
+    del caption_results
+    del listing_results
+    del detection_results
+    del segmentation_results
+    del depth_results
+
     typer.echo(f"Annotated dataset saved to {output_dataset}")
 
+    preview_table: Optional[pa.Table] = None
+    if preview_tables:
+        preview_table = pa.concat_tables(preview_tables).combine_chunks()
+
     if vis_output is not None:
-        _preview_rows(annotated, limit=3)
+        if preview_table is not None:
+            _preview_rows(preview_table, limit=3)
 
         typer.echo(f"Generating visualizations in {vis_output} ...")
         _visualize_models(
