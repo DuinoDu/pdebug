@@ -3,7 +3,7 @@
 
 Install env steps:
     pip3 install -e ".[all]"
-    bash $INSTALL/torch.sh 2.7.0    # moondream_node required torch = 2.7.0 
+    FORCE_INSTALL_TORCH=1 bash $INSTALL/torch.sh 2.7.0    # moondream_node required torch = 2.7.0 
     bash $INSTALL/flash_attn.sh     # qwen2_5_vl
     bash $INSTALL/DCNv4.sh          # internimage_semseg, including mmcv_full==1.5.0
 
