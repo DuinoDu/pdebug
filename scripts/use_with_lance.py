@@ -298,7 +298,7 @@ _VIS_GRID_COLS = 2
 
 def _preview_rows(table: pa.Table, limit: int = 3) -> None:
     rows = min(limit, len(table))
-    typer.echo(f"Previewing first {rows} rows:")
+    logger.info(f"Previewing first {rows} rows:")
     for idx in range(rows):
         row = table.slice(idx, 1)
         summary = {}
@@ -325,7 +325,7 @@ def _preview_rows(table: pa.Table, limit: int = 3) -> None:
             summary["cortexia_depth"]["map"] = str(
                 summary["cortexia_depth"]["map"]
             )[-100:]
-        typer.echo(f"\n  Row {idx}: {summary}")
+        logger.info(f"\n  Row {idx}: {summary}")
 
 
 # ---------------------------------------------------------------------------
@@ -828,7 +828,7 @@ def main(
         row_limit=row_limit,
     )
 
-    typer.echo(f"Scanning Lance dataset from {dataset_path} ...")
+    logger.info(f"Scanning Lance dataset from {dataset_path} ...")
     import lance
 
     ds = lance.dataset(str(dataset_path))
@@ -848,7 +848,7 @@ def main(
         effective_batch_size = total_rows
     effective_batch_size = max(1, min(effective_batch_size, total_rows))
 
-    typer.echo(
+    logger.info(
         f"Processing {total_rows} rows in batches of {effective_batch_size}."
     )
     def iter_batches() -> Iterator[LanceBatch]:
@@ -865,7 +865,7 @@ def main(
     _cuda_warmup()
 
     # Stage 1: Caption
-    typer.echo("Running Moondream caption inference ...")
+    logger.info("Running Moondream caption inference ...")
     caption_before = gpu_memory_tic()
     caption_results: List[Dict[str, object]] = []
     processed = 0
@@ -889,7 +889,7 @@ def main(
     )
 
     # Stage 2: Listing
-    typer.echo("Running Qwen2.5-VL listing inference ...")
+    logger.info("Running Qwen2.5-VL listing inference ...")
     prompt = qwen_prompt or qwen2_5_vl.DEFAULT_TEXT
     listing_before = gpu_memory_tic()
     listing_results: List[Dict[str, object]] = []
@@ -916,7 +916,7 @@ def main(
     )
 
     # Stage 3: Detection (depends on listing results)
-    typer.echo("Running GroundingDINO detection with listing prompts ...")
+    logger.info("Running GroundingDINO detection with listing prompts ...")
     detection_before = gpu_memory_tic()
     detection_results: List[Dict[str, object]] = []
     processed = 0
@@ -944,7 +944,7 @@ def main(
     )
 
     # Stage 4: Segmentation
-    typer.echo("Running InternImage segmentation ...")
+    logger.info("Running InternImage segmentation ...")
     segmentation_before = gpu_memory_tic()
     segmentation_results: List[Dict[str, object]] = []
     processed = 0
@@ -970,7 +970,7 @@ def main(
     )
 
     # Stage 5: Depth
-    typer.echo("Running ML-Depth-Pro depth estimation ...")
+    logger.info("Running ML-Depth-Pro depth estimation ...")
     depth_before = gpu_memory_tic()
     depth_results: List[Dict[str, object]] = []
     processed = 0
@@ -1036,7 +1036,7 @@ def main(
                 preview_remaining -= take
 
         processed += span
-        typer.echo(
+        logger.info(
             f"Completed batch {batch_index}: {processed}/{total_rows} rows written."
         )
 
@@ -1054,7 +1054,7 @@ def main(
     del segmentation_results
     del depth_results
 
-    typer.echo(f"Annotated dataset saved to {output_dataset}")
+    logger.info(f"Annotated dataset saved to {output_dataset}")
 
     preview_table: Optional[pa.Table] = None
     if preview_tables:
@@ -1064,14 +1064,14 @@ def main(
         if preview_table is not None:
             _preview_rows(preview_table, limit=3)
 
-        typer.echo(f"Generating visualizations in {vis_output} ...")
+        logger.info(f"Generating visualizations in {vis_output} ...")
         _visualize_models(
             output_dataset,
             image_col=image_col,
             reader_kwargs=reader_kwargs,
             output_dir=vis_output,
         )
-        typer.echo(f"Visualization collages saved to: {vis_output}")
+        logger.info(f"Visualization collages saved to: {vis_output}")
 
 
 if __name__ == "__main__":
