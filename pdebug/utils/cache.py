@@ -56,6 +56,8 @@ class ResultCache:
         *,
         chunk_size: int = 200,
         tmp_root: Optional[Path] = None,
+        persist_path: Optional[Path] = None,
+        resume: bool = False,
     ) -> None:
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive.")
@@ -67,12 +69,25 @@ class ResultCache:
             tmp_dir = tempfile.mkdtemp(
                 prefix=f"pdebug_{stage_name}_", dir=str(tmp_root)
             )
-        else:
+        elif persist_path is None:
             tmp_dir = tempfile.mkdtemp(prefix=f"pdebug_{stage_name}_")
+        else:
+            persist_path = persist_path.resolve()
+            if persist_path.exists() and not resume:
+                shutil.rmtree(persist_path)
+            persist_path.mkdir(parents=True, exist_ok=True)
+            tmp_dir = str(persist_path)
         self._tmpdir = Path(tmp_dir)
+        self._persistent = persist_path is not None
+        self._manifest_path: Optional[Path] = (
+            self._tmpdir / "manifest.pkl" if self._persistent else None
+        )
         self._queue: Deque[Dict[str, object]] = deque()
         self._chunk_paths: List[Path] = []
+        self._chunk_sizes: List[int] = []
         self._count = 0
+        if self._persistent and resume:
+            self._load_persistent_state()
 
     @property
     def count(self) -> int:
@@ -81,6 +96,10 @@ class ResultCache:
     @property
     def tmpdir(self) -> Path:
         return self._tmpdir
+
+    @property
+    def persistent(self) -> bool:
+        return self._persistent
 
     def append_many(self, payloads: Sequence[Dict[str, object]]) -> None:
         for payload in payloads:
@@ -107,13 +126,77 @@ class ResultCache:
             return
         index = len(self._chunk_paths)
         path = self._tmpdir / f"{self.stage_name}_{index:05d}.pkl"
+        chunk = list(self._queue)
         with path.open("wb") as handle:
-            pickle.dump(list(self._queue), handle, protocol=pickle.HIGHEST_PROTOCOL)
+            pickle.dump(chunk, handle, protocol=pickle.HIGHEST_PROTOCOL)
         self._chunk_paths.append(path)
+        self._chunk_sizes.append(len(chunk))
         self._queue.clear()
+        if self._persistent:
+            self._save_manifest()
 
     def cleanup(self) -> None:
+        if self._persistent:
+            return
         try:
             shutil.rmtree(self._tmpdir, ignore_errors=True)
         except Exception:
             pass
+
+    def _save_manifest(self) -> None:
+        if not self._persistent or self._manifest_path is None:
+            return
+        manifest_payload = {
+            "count": self._count,
+            "chunks": [
+                {"filename": path.name, "count": size}
+                for path, size in zip(self._chunk_paths, self._chunk_sizes)
+            ],
+        }
+        with self._manifest_path.open("wb") as handle:
+            pickle.dump(
+                manifest_payload, handle, protocol=pickle.HIGHEST_PROTOCOL
+            )
+
+    def _load_persistent_state(self) -> None:
+        if not self._tmpdir.exists():
+            self._tmpdir.mkdir(parents=True, exist_ok=True)
+            return
+        if self._manifest_path and self._manifest_path.exists():
+            try:
+                with self._manifest_path.open("rb") as handle:
+                    payload = pickle.load(handle)
+            except Exception:
+                payload = {}
+            chunks = payload.get("chunks", []) if isinstance(payload, dict) else []
+            for entry in chunks:
+                filename = entry.get("filename")
+                count = entry.get("count", 0)
+                if not filename:
+                    continue
+                path = self._tmpdir / filename
+                if not path.exists():
+                    continue
+                try:
+                    count_int = int(count)
+                except Exception:
+                    continue
+                self._chunk_paths.append(path)
+                self._chunk_sizes.append(count_int)
+                self._count += count_int
+            # If manifest references no files, fall back to scan
+            if self._chunk_paths:
+                return
+        for path in sorted(self._tmpdir.glob("*.pkl")):
+            try:
+                with path.open("rb") as handle:
+                    chunk = pickle.load(handle)
+            except Exception:
+                continue
+            if not isinstance(chunk, list):
+                continue
+            count = len(chunk)
+            self._chunk_paths.append(path)
+            self._chunk_sizes.append(count)
+            self._count += count
+        self._save_manifest()

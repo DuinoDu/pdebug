@@ -30,3 +30,32 @@ def test_result_cache_fifo(tmp_path):
 
     cache.cleanup()
     assert not cache.tmpdir.exists()
+
+
+def test_result_cache_resume(tmp_path):
+    cache_root = Path(tmp_path) / "cache_resume"
+    cache = ResultCache(
+        "stage",
+        chunk_size=2,
+        persist_path=cache_root,
+    )
+    cache.append({"idx": 0})
+    cache.append({"idx": 1})
+    cache.finalize()
+
+    resumed = ResultCache(
+        "stage",
+        chunk_size=2,
+        persist_path=cache_root,
+        resume=True,
+    )
+    assert resumed.count == 2
+    assert resumed.persistent
+    resumed.append({"idx": 2})
+    resumed.finalize()
+
+    values = [entry["idx"] for entry in resumed.iter_results()]
+    assert values == [0, 1, 2]
+
+    resumed.cleanup()
+    assert cache_root.exists()
