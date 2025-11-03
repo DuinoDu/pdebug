@@ -28,6 +28,8 @@ from pdebug.otn.infer.lance_utils import (
     compute_image_stats,
     decode_bitmask,
     decode_depth_map,
+    encode_depth_map_uint16,
+    decode_depth_map_uint16,
     load_lance_batch,
 )
 from pdebug.utils.cache import ResultCache
@@ -628,8 +630,13 @@ def _render_depth(
         value = depth_data.get(key)
         if isinstance(value, (float, int)):
             lines.append(f"{key}: {float(value):.3f}")
-
-    depth_map = decode_depth_map(depth_data.get("map")) if depth_data else None
+    
+    if "float16" in depth_data["map"]["encoding"]:
+        depth_map = decode_depth_map(depth_data.get("map")) if depth_data else None
+    elif "uint16_png" in depth_data["map"]["encoding"]:
+        depth_map = decode_depth_map_uint16(depth_data.get("map")) if depth_data else None
+    else:
+        raise NotImplementedError
     if depth_map is None:
         return _append_text_panel(image, "[Depth]", lines or ["No depth map"])
 
@@ -1234,6 +1241,21 @@ def main(
                     "Final write pass received mismatched result chunk sizes."
                 )
 
+            # reduce segmentation_slice size
+            for item in segmentation_slice:
+                assert item["mask"].max() <= 255
+                item["mask"] = item["mask"].astype(np.uint8)
+
+            # reduce depth_slice size
+            for item in depth_slice:
+                item.pop("processing_time_ms")
+                item.pop("mean_depth")
+                item.pop("model_name")
+                if "encoding" in item["map"]:
+                    # convert to uint16 png compress
+                    depth_map = decode_depth_map(item.get("map"))
+                    item["map"] = encode_depth_map_uint16(depth_map)
+            
             column_map = {
                 "cortexia_caption": _dicts_to_struct_array(caption_slice),
                 "cortexia_tags": _dicts_to_struct_array(listing_slice),
