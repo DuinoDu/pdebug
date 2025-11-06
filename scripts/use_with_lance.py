@@ -983,6 +983,8 @@ def main(
     preview_tables: List[pa.Table] = []
     preview_remaining = 3
 
+    run_success = False
+
     try:
         # Stage 1: Caption
         logger.info(f"Running Moondream caption inference ...")
@@ -1288,9 +1290,22 @@ def main(
                 "Final write pass processed an unexpected number of rows."
             )
 
+        run_success = True
+
     finally:
         for cache in caches:
             cache.cleanup()
+
+    if run_success and cache_root is not None and cache_root.exists():
+        try:
+            shutil.rmtree(cache_root)
+            logger.info(f"Removed Lance cache directory: {cache_root}")
+        except Exception as exc:
+            logger.warning(
+                "Unable to remove Lance cache directory %s: %s",
+                cache_root,
+                exc,
+            )
 
     logger.info(f"Annotated dataset saved to {output_dataset}")
 
