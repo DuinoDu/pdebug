@@ -168,7 +168,7 @@ def _table_to_lance_batch(
     video_id_col: Optional[str],
     frame_num_col: Optional[str],
     index_offset: int,
-    trigger: Optional[str],
+    trigger: Optional[str] = None,
 ) -> LanceBatch:
     images: List[np.ndarray] = []
     metadata: List[Dict[str, object]] = []
@@ -232,7 +232,7 @@ def _iter_lance_batches(
     timestamp_col: Optional[str],
     video_id_col: Optional[str],
     frame_num_col: Optional[str],
-    trigger: Optional[str],
+    trigger: Optional[str] = None,
 ) -> Iterator[LanceBatch]:
     import lance
 
@@ -882,6 +882,11 @@ def main(
         "--qwen-prompt",
         help="Custom user prompt passed to Qwen2.5-VL.",
     ),
+    trigger: Optional[str] = typer.Option(
+        None,
+        "--trigger",
+        help="Trigger to filter the dataset.",
+    ),
 ) -> None:
     dataset_path = input_dataset.resolve()
     if output_dataset is None:
@@ -934,6 +939,7 @@ def main(
             timestamp_col=timestamp_col,
             video_id_col=video_id_col,
             frame_num_col=frame_num_col,
+            trigger=trigger,
         )
 
     _cuda_warmup()
