@@ -175,6 +175,7 @@ def _table_to_lance_batch(
 
     if trigger:
         table = table.filter(pc.equal(table['trigger'], pa.scalar(trigger)))
+        print(f"Filtered table to {len(table)} rows with trigger: {trigger}")
 
     for row_idx in range(len(table)):
         row = table.slice(row_idx, 1)
