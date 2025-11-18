@@ -82,7 +82,8 @@ def _visualize_models(
     batch_size: int,
     timestamp_col: Optional[str],
     video_id_col: Optional[str],
-    frame_num_col: Optional[str],
+    frame_num_col: Optional[str],   
+    trigger: Optional[str],
 ) -> None:
     """Visualize models from Lance dataset.
 
@@ -115,6 +116,7 @@ def _visualize_models(
         timestamp_col=timestamp_col,
         video_id_col=video_id_col,
         frame_num_col=frame_num_col,
+        trigger=trigger,
     )
 
     for batch_index, batch in enumerate(batch_iterator, start=1):
@@ -256,6 +258,11 @@ def main(
         "--preview/--no-preview",
         help="Preview first 3 rows of the dataset before visualization.",
     ),
+    trigger: Optional[str] = typer.Option(
+        None,
+        "--trigger",
+        help="Trigger to filter the dataset.",
+    ),
 ) -> None:
     """Generate visualizations from an annotated Lance dataset.
 
@@ -316,6 +323,7 @@ def main(
         timestamp_col=timestamp_col,
         video_id_col=video_id_col,
         frame_num_col=frame_num_col,
+        trigger=trigger,
     )
     logger.info(f"Visualization collages saved to: {output_dir}")
 

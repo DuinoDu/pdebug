@@ -38,6 +38,7 @@ from pdebug.utils.gpu_memory import gpu_memory_tic, gpu_memory_toc
 import cv2
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 import typer
 from loguru import logger
 
@@ -167,9 +168,13 @@ def _table_to_lance_batch(
     video_id_col: Optional[str],
     frame_num_col: Optional[str],
     index_offset: int,
+    trigger: Optional[str],
 ) -> LanceBatch:
     images: List[np.ndarray] = []
     metadata: List[Dict[str, object]] = []
+
+    if trigger:
+        table = table.filter(pc.equal(table['trigger'], pa.scalar(trigger)))
 
     for row_idx in range(len(table)):
         row = table.slice(row_idx, 1)
@@ -227,6 +232,7 @@ def _iter_lance_batches(
     timestamp_col: Optional[str],
     video_id_col: Optional[str],
     frame_num_col: Optional[str],
+    trigger: Optional[str],
 ) -> Iterator[LanceBatch]:
     import lance
 
@@ -263,6 +269,7 @@ def _iter_lance_batches(
             video_id_col=video_id_col,
             frame_num_col=frame_num_col,
             index_offset=processed,
+            trigger=trigger,
         )
 
         yield batch
