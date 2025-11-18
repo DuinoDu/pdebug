@@ -78,9 +78,9 @@ def _load_moondream_model():
     import torch
     from transformers import AutoModelForCausalLM  # type: ignore
 
-    if Version(torch.__version__) < Version("2.7.0"):
+    if Version(torch.__version__) < Version("2.5.0"):
         raise RuntimeError(
-            f"PyTorch version ({torch.__version__}) should >= 2.7.0"
+            f"PyTorch version ({torch.__version__}) should >= 2.5.0"
         )
 
     model_id = "vikhyatk/moondream2"
