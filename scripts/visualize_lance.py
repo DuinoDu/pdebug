@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Visualize annotations from a Lance dataset.
+"""Visualize annotations from a Lance dataset. (AI)
 
 This script reads an annotated Lance dataset and generates visualization
 collages showing the original images along with their annotations (caption,
