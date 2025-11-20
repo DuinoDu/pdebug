@@ -189,7 +189,8 @@ def concat_video(
     horizontal: bool = False,
     add_index: bool = True,
     mask_by_alpha=True,
-    output: str = "tmp_concat_output",
+    strict: bool = True,
+    output: str = "tmp_concat_output.mp4",
 ):
     """Concat two videos from two.
 
@@ -198,8 +199,6 @@ def concat_video(
         videos: input video file list, concat by comma.
         titles: title of each imgdir.
     """
-    if output is None:
-        output = "result_concat.mp4"
     if os.path.exists(output):
         os.remove(output)
 
@@ -234,7 +233,11 @@ def concat_video(
     output_frames = []
     for ind in range(len(readers[0])):
         t.update()
-        img_list = [r.__next__() for r in readers]
+        try:
+            img_list = [r.__next__() for r in readers]
+        except StopIteration as e:
+            if strict: raise e
+            else: break
         img_concat = concat(*img_list)
         output_frames.append(img_concat[:, :, ::-1])  # bgr to rgb
 

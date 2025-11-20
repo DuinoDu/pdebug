@@ -3,19 +3,19 @@ import os
 import subprocess
 from pathlib import Path
 from typing import List, Optional, Tuple
+from packaging.version import Version
 
 import cv2
 import numpy as np
 
 from ..registry import OUTPUT_REGISTRY
+from ...utils.env import MOVIEPY_INSTALLED
 
-try:
+if MOVIEPY_INSTALLED:
     import moviepy
-    from moviepy.editor import ImageClip, concatenate_videoclips
+    assert Version(moviepy.__version__) >= Version("2.1.2")
+    from moviepy import ImageClip, concatenate_videoclips
 
-    MOVIEPY_INSTALLED = True
-except ImportError:
-    MOVIEPY_INSTALLED = False
 
 __all__ = ["ImgdirWriter", "VideoWriter", "FFmpegVideoWriter"]
 
@@ -37,7 +37,6 @@ class ImgdirWriter:
             savename = os.path.join(savedir, f"{idx}{self._ext}")
             cv2.imwrite(savename, image)
 
-
 @OUTPUT_REGISTRY.register(name="video")
 class VideoWriter:
 
@@ -58,12 +57,12 @@ class VideoWriter:
     def save(self, savename: str):
         fps = self._write_kwargs.get("fps", 15)
         duration = 1.0 / fps
-        clips = [ImageClip(m).set_duration(duration) for m in self._images]
+        clips = [ImageClip(m, duration=duration) for m in self._images]
         for c in clips:
             c.fps = fps
         concat_clip = concatenate_videoclips(clips, method="compose")
         video_ext = os.path.splitext(savename)[1]
-        assert video_ext in (".mp4", ".avi", "ogv", ".webm")
+        assert video_ext in (".mp4", ".avi", "ogv", ".webm"), "Unknown video ext: {video_ext}"
         concat_clip.write_videofile(savename, **self._write_kwargs)
         concat_clip.close()
 
