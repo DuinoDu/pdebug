@@ -895,7 +895,9 @@ def main(
         help=(
             "Pipeline stages to execute. Repeat to select multiple from "
             "caption, listing, detection, segmentation, depth. Defaults to "
-            "all stages. Example: --task segmentation to only run segmentation."
+            "all stages. Example: --task segmentation to only run "
+            "segmentation or -t caption -t segmentation to run those two "
+            "stages only."
         ),
     ),
 ) -> None:
