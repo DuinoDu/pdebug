@@ -61,13 +61,16 @@ AVAILABLE_TASKS = (
     "depth",
 )
 
+TASK_DEPENDENCIES = {
+    "detection": {"listing"},
+}
+
 
 def _resolve_tasks(tasks: Optional[Sequence[str]]) -> List[str]:
-    if tasks is None or len(tasks) == 0:
-        return list(AVAILABLE_TASKS)
+    requested = AVAILABLE_TASKS if not tasks else tasks
 
     normalized: List[str] = []
-    for task in tasks:
+    for task in requested:
         value = task.strip().lower()
         if value not in AVAILABLE_TASKS:
             raise typer.BadParameter(
@@ -76,11 +79,11 @@ def _resolve_tasks(tasks: Optional[Sequence[str]]) -> List[str]:
         if value not in normalized:
             normalized.append(value)
 
-    ordered = [task for task in AVAILABLE_TASKS if task in normalized]
-    if "detection" in ordered and "listing" not in ordered:
-        raise typer.BadParameter(
-            "Detection requires listing results. Include '--task listing'."
-        )
+    expanded = set(normalized)
+    for task in normalized:
+        expanded.update(TASK_DEPENDENCIES.get(task, ()))
+
+    ordered = [task for task in AVAILABLE_TASKS if task in expanded]
     return ordered
 
 
@@ -835,7 +838,8 @@ def main(
         "-t",
         help=(
             "Pipeline tasks to execute. May be provided multiple times. "
-            "Options: caption, listing, detection, segmentation, depth."
+            "Options: caption, listing, detection, segmentation, depth. "
+            "Dependencies (e.g., detection -> listing) are included automatically."
         ),
     ),
     unittest: bool = typer.Option(
@@ -1045,6 +1049,14 @@ def main(
             (getattr(ml_depth_pro_module, "_load_depth_pro_model", None),),
         )
 
+    result_columns = {
+        "caption": ("cortexia_caption", caption_results),
+        "listing": ("cortexia_tags", listing_results),
+        "detection": ("cortexia_detection", detection_results),
+        "segmentation": ("cortexia_segmentation", segmentation_results),
+        "depth": ("cortexia_depth", depth_results),
+    }
+
     # Final write pass aggregating all stage outputs
     writer = LanceDatasetWriter(output_dataset)
     preview_tables: List[pa.Table] = []
@@ -1058,26 +1070,11 @@ def main(
             continue
 
         column_map = {}
-        if "caption" in tasks_to_run:
-            column_map["cortexia_caption"] = _dicts_to_struct_array(
-                caption_results[processed : processed + span]
-            )
-        if "listing" in tasks_to_run:
-            column_map["cortexia_tags"] = _dicts_to_struct_array(
-                listing_results[processed : processed + span]
-            )
-        if "detection" in tasks_to_run:
-            column_map["cortexia_detection"] = _dicts_to_struct_array(
-                detection_results[processed : processed + span]
-            )
-        if "segmentation" in tasks_to_run:
-            column_map["cortexia_segmentation"] = _dicts_to_struct_array(
-                segmentation_results[processed : processed + span]
-            )
-        if "depth" in tasks_to_run:
-            column_map["cortexia_depth"] = _dicts_to_struct_array(
-                depth_results[processed : processed + span]
-            )
+        for task, (column, results) in result_columns.items():
+            if task in tasks_to_run:
+                column_map[column] = _dicts_to_struct_array(
+                    results[processed : processed + span]
+                )
 
         annotated = _append_columns(table, column_map)
         writer.write_batch(annotated)
