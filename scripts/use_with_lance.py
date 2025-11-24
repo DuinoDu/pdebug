@@ -53,6 +53,37 @@ app = typer.Typer(
 )
 
 
+AVAILABLE_TASKS = (
+    "caption",
+    "listing",
+    "detection",
+    "segmentation",
+    "depth",
+)
+
+
+def _resolve_tasks(tasks: Optional[Sequence[str]]) -> List[str]:
+    if tasks is None or len(tasks) == 0:
+        return list(AVAILABLE_TASKS)
+
+    normalized: List[str] = []
+    for task in tasks:
+        value = task.strip().lower()
+        if value not in AVAILABLE_TASKS:
+            raise typer.BadParameter(
+                f"Unsupported task '{task}'. Choose from {', '.join(AVAILABLE_TASKS)}."
+            )
+        if value not in normalized:
+            normalized.append(value)
+
+    ordered = [task for task in AVAILABLE_TASKS if task in normalized]
+    if "detection" in ordered and "listing" not in ordered:
+        raise typer.BadParameter(
+            "Detection requires listing results. Include '--task listing'."
+        )
+    return ordered
+
+
 # ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
@@ -798,6 +829,15 @@ def main(
         min=1,
         help="Number of rows to materialize per batch.",
     ),
+    tasks: Optional[List[str]] = typer.Option(
+        None,
+        "--task",
+        "-t",
+        help=(
+            "Pipeline tasks to execute. May be provided multiple times. "
+            "Options: caption, listing, detection, segmentation, depth."
+        ),
+    ),
     unittest: bool = typer.Option(
         False,
         "--unittest/--no-unittest",
@@ -809,6 +849,8 @@ def main(
         help="Custom user prompt passed to Qwen2.5-VL.",
     ),
 ) -> None:
+    tasks_to_run = _resolve_tasks(tasks)
+
     dataset_path = input_dataset.resolve()
     if output_dataset is None:
         output_dataset = dataset_path.with_name(
@@ -865,136 +907,143 @@ def main(
     _cuda_warmup()
 
     # Stage 1: Caption
-    logger.info("Running Moondream caption inference ...")
-    caption_before = gpu_memory_tic()
     caption_results: List[Dict[str, object]] = []
-    processed = 0
-    for batch in iter_batches():
-        logger.info(f"[Moondream] {processed} / {total_rows}")
-        if not batch.images:
+    if "caption" in tasks_to_run:
+        logger.info("Running Moondream caption inference ...")
+        caption_before = gpu_memory_tic()
+        processed = 0
+        for batch in iter_batches():
+            logger.info(f"[Moondream] {processed} / {total_rows}")
+            if not batch.images:
+                del batch
+                continue
+            caption_results.extend(
+                _run_caption(batch.images, unittest=unittest)
+            )
+            processed += len(batch.images)
             del batch
-            continue
-        caption_results.extend(_run_caption(batch.images, unittest=unittest))
-        processed += len(batch.images)
-        del batch
-        gc.collect()
-    if processed != total_rows:
-        raise RuntimeError(
-            "Caption stage processed an unexpected number of rows."
+            gc.collect()
+        if processed != total_rows:
+            raise RuntimeError(
+                "Caption stage processed an unexpected number of rows."
+            )
+        gpu_memory_toc(
+            "Moondream caption inference",
+            caption_before,
+            (getattr(moondream_module, "_load_moondream_model", None),),
         )
-    gpu_memory_toc(
-        "Moondream caption inference",
-        caption_before,
-        (getattr(moondream_module, "_load_moondream_model", None),),
-    )
 
     # Stage 2: Listing
-    logger.info("Running Qwen2.5-VL listing inference ...")
-    prompt = qwen_prompt or qwen2_5_vl.DEFAULT_TEXT
-    listing_before = gpu_memory_tic()
     listing_results: List[Dict[str, object]] = []
-    processed = 0
-    for batch in iter_batches():
-        logger.info(f"[Qwen2.5-VL] {processed} / {total_rows}")
-        if not batch.images:
+    if "listing" in tasks_to_run:
+        logger.info("Running Qwen2.5-VL listing inference ...")
+        prompt = qwen_prompt or qwen2_5_vl.DEFAULT_TEXT
+        listing_before = gpu_memory_tic()
+        processed = 0
+        for batch in iter_batches():
+            logger.info(f"[Qwen2.5-VL] {processed} / {total_rows}")
+            if not batch.images:
+                del batch
+                continue
+            listing_results.extend(
+                _run_listing(batch.images, unittest=unittest, prompt=prompt)
+            )
+            processed += len(batch.images)
             del batch
-            continue
-        listing_results.extend(
-            _run_listing(batch.images, unittest=unittest, prompt=prompt)
+            gc.collect()
+        if processed != total_rows:
+            raise RuntimeError(
+                "Listing stage processed an unexpected number of rows."
+            )
+        gpu_memory_toc(
+            "Qwen2.5-VL listing inference",
+            listing_before,
+            (getattr(qwen2_5_vl, "_load_qwen_model", None),),
         )
-        processed += len(batch.images)
-        del batch
-        gc.collect()
-    if processed != total_rows:
-        raise RuntimeError(
-            "Listing stage processed an unexpected number of rows."
-        )
-    gpu_memory_toc(
-        "Qwen2.5-VL listing inference",
-        listing_before,
-        (getattr(qwen2_5_vl, "_load_qwen_model", None),),
-    )
 
     # Stage 3: Detection (depends on listing results)
-    logger.info("Running GroundingDINO detection with listing prompts ...")
-    detection_before = gpu_memory_tic()
     detection_results: List[Dict[str, object]] = []
-    processed = 0
-    for batch in iter_batches():
-        logger.info(f"[GroundingDINO] {processed} / {total_rows}")
-        if not batch.images:
+    if "detection" in tasks_to_run:
+        logger.info("Running GroundingDINO detection with listing prompts ...")
+        detection_before = gpu_memory_tic()
+        processed = 0
+        for batch in iter_batches():
+            logger.info(f"[GroundingDINO] {processed} / {total_rows}")
+            if not batch.images:
+                del batch
+                continue
+            span = len(batch.images)
+            listing_slice = listing_results[processed : processed + span]
+            detection_results.extend(
+                _run_detection(batch.images, listing_slice, unittest=unittest)
+            )
+            processed += span
             del batch
-            continue
-        span = len(batch.images)
-        listing_slice = listing_results[processed : processed + span]
-        detection_results.extend(
-            _run_detection(batch.images, listing_slice, unittest=unittest)
+            gc.collect()
+        if processed != total_rows:
+            raise RuntimeError(
+                "Detection stage processed an unexpected number of rows."
+            )
+        gpu_memory_toc(
+            "GroundingDINO detection",
+            detection_before,
+            (getattr(groundingdino_module, "_load_groundingdino_model", None),),
         )
-        processed += span
-        del batch
-        gc.collect()
-    if processed != total_rows:
-        raise RuntimeError(
-            "Detection stage processed an unexpected number of rows."
-        )
-    gpu_memory_toc(
-        "GroundingDINO detection",
-        detection_before,
-        (getattr(groundingdino_module, "_load_groundingdino_model", None),),
-    )
 
     # Stage 4: Segmentation
-    logger.info("Running InternImage segmentation ...")
-    segmentation_before = gpu_memory_tic()
     segmentation_results: List[Dict[str, object]] = []
-    processed = 0
-    for batch in iter_batches():
-        logger.info(f"[Internimage] {processed} / {total_rows}")
-        if not batch.images:
+    if "segmentation" in tasks_to_run:
+        logger.info("Running InternImage segmentation ...")
+        segmentation_before = gpu_memory_tic()
+        processed = 0
+        for batch in iter_batches():
+            logger.info(f"[Internimage] {processed} / {total_rows}")
+            if not batch.images:
+                del batch
+                continue
+            segmentation_results.extend(
+                _run_segmentation(batch.images, unittest=unittest)
+            )
+            processed += len(batch.images)
             del batch
-            continue
-        segmentation_results.extend(
-            _run_segmentation(batch.images, unittest=unittest)
+            gc.collect()
+        if processed != total_rows:
+            raise RuntimeError(
+                "Segmentation stage processed an unexpected number of rows."
+            )
+        gpu_memory_toc(
+            "Internimage segmentation",
+            segmentation_before,
+            (getattr(semseg_module, "_load_internimage_model", None),),
         )
-        processed += len(batch.images)
-        del batch
-        gc.collect()
-    if processed != total_rows:
-        raise RuntimeError(
-            "Segmentation stage processed an unexpected number of rows."
-        )
-    gpu_memory_toc(
-        "Internimage segmentation",
-        segmentation_before,
-        (getattr(semseg_module, "_load_internimage_model", None),),
-    )
 
     # Stage 5: Depth
-    logger.info("Running ML-Depth-Pro depth estimation ...")
-    depth_before = gpu_memory_tic()
     depth_results: List[Dict[str, object]] = []
-    processed = 0
-    for batch in iter_batches():
-        logger.info(f"[ML-Depth-Pro] {processed} / {total_rows}")
-        if not batch.images:
+    if "depth" in tasks_to_run:
+        logger.info("Running ML-Depth-Pro depth estimation ...")
+        depth_before = gpu_memory_tic()
+        processed = 0
+        for batch in iter_batches():
+            logger.info(f"[ML-Depth-Pro] {processed} / {total_rows}")
+            if not batch.images:
+                del batch
+                continue
+            for image in batch.images:
+                depth_results.append(  # type: ignore[attr-defined]
+                    ml_depth_pro_module._depth_infer(image, unittest=unittest)
+                )
+            processed += len(batch.images)
             del batch
-            continue
-        for image in batch.images:
-            depth_results.append(  # type: ignore[attr-defined]
-                ml_depth_pro_module._depth_infer(image, unittest=unittest)
+            gc.collect()
+        if processed != total_rows:
+            raise RuntimeError(
+                "Depth stage processed an unexpected number of rows."
             )
-        processed += len(batch.images)
-        del batch
-        gc.collect()
-    if processed != total_rows:
-        raise RuntimeError(
-            "Depth stage processed an unexpected number of rows."
+        gpu_memory_toc(
+            "ML-Depth-Pro depth estimation",
+            depth_before,
+            (getattr(ml_depth_pro_module, "_load_depth_pro_model", None),),
         )
-    gpu_memory_toc(
-        "ML-Depth-Pro depth estimation",
-        depth_before,
-        (getattr(ml_depth_pro_module, "_load_depth_pro_model", None),),
-    )
 
     # Final write pass aggregating all stage outputs
     writer = LanceDatasetWriter(output_dataset)
@@ -1008,23 +1057,27 @@ def main(
             del batch
             continue
 
-        column_map = {
-            "cortexia_caption": _dicts_to_struct_array(
+        column_map = {}
+        if "caption" in tasks_to_run:
+            column_map["cortexia_caption"] = _dicts_to_struct_array(
                 caption_results[processed : processed + span]
-            ),
-            "cortexia_tags": _dicts_to_struct_array(
+            )
+        if "listing" in tasks_to_run:
+            column_map["cortexia_tags"] = _dicts_to_struct_array(
                 listing_results[processed : processed + span]
-            ),
-            "cortexia_detection": _dicts_to_struct_array(
+            )
+        if "detection" in tasks_to_run:
+            column_map["cortexia_detection"] = _dicts_to_struct_array(
                 detection_results[processed : processed + span]
-            ),
-            "cortexia_segmentation": _dicts_to_struct_array(
+            )
+        if "segmentation" in tasks_to_run:
+            column_map["cortexia_segmentation"] = _dicts_to_struct_array(
                 segmentation_results[processed : processed + span]
-            ),
-            "cortexia_depth": _dicts_to_struct_array(
+            )
+        if "depth" in tasks_to_run:
+            column_map["cortexia_depth"] = _dicts_to_struct_array(
                 depth_results[processed : processed + span]
-            ),
-        }
+            )
 
         annotated = _append_columns(table, column_map)
         writer.write_batch(annotated)
