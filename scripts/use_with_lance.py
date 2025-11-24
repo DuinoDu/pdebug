@@ -888,7 +888,52 @@ def main(
         "--trigger",
         help="Trigger to filter the dataset.",
     ),
+    tasks: Optional[List[str]] = typer.Option(
+        None,
+        "--task",
+        "-t",
+        help=(
+            "Pipeline stages to execute. Repeat to select multiple from "
+            "caption, listing, detection, segmentation, depth. Defaults to "
+            "all stages. Example: --task segmentation to only run "
+            "segmentation or -t caption -t segmentation to run those two "
+            "stages only."
+        ),
+    ),
 ) -> None:
+    available_stages: Tuple[str, ...] = (
+        "caption",
+        "listing",
+        "detection",
+        "segmentation",
+        "depth",
+    )
+
+    if tasks:
+        normalized_tasks = [task.lower() for task in tasks]
+        invalid = [task for task in normalized_tasks if task not in available_stages]
+        if invalid:
+            raise typer.BadParameter(
+                f"Unsupported task(s) requested: {invalid}. "
+                f"Choose from {', '.join(available_stages)}."
+            )
+
+        requested_tasks = set(normalized_tasks)
+        if "detection" in requested_tasks and "listing" not in requested_tasks:
+            logger.info(
+                "Including listing task because detection depends on listing prompts."
+            )
+            requested_tasks.add("listing")
+
+        stages_to_run: Tuple[str, ...] = tuple(
+            stage for stage in available_stages if stage in requested_tasks
+        )
+    else:
+        stages_to_run = available_stages
+
+    if not stages_to_run:
+        raise typer.BadParameter("At least one task must be selected.")
+
     dataset_path = input_dataset.resolve()
     if output_dataset is None:
         output_dataset = dataset_path.with_name(
@@ -1001,234 +1046,276 @@ def main(
 
     try:
         # Stage 1: Caption
-        logger.info(f"Running Moondream caption inference ...")
-        caption_before = gpu_memory_tic()
-        caption_resume = min(caption_cache.count, total_rows) if resume else 0
-        if resume and caption_cache.count > total_rows:
-            logger.warning(
-                "Caption cache contains %d rows but dataset has %d; "
-                "only the first %d rows will be reused.",
-                caption_cache.count,
-                total_rows,
-                caption_resume,
-            )
-        if resume and caption_resume >= total_rows:
-            logger.info(f"Caption cache already covers all rows; skipping stage.")
-        processed = caption_resume
-        for batch in _resume_batches(
-            iter_batches(), resume_count=caption_resume, stage="Moondream"
-        ):
-            logger.info(f"[Moondream] {processed} / {total_rows}")
-            if not batch.images:
+        if "caption" in stages_to_run:
+            logger.info(f"Running Moondream caption inference ...")
+            caption_before = gpu_memory_tic()
+            caption_resume = min(caption_cache.count, total_rows) if resume else 0
+            if resume and caption_cache.count > total_rows:
+                logger.warning(
+                    "Caption cache contains %d rows but dataset has %d; "
+                    "only the first %d rows will be reused.",
+                    caption_cache.count,
+                    total_rows,
+                    caption_resume,
+                )
+            if resume and caption_resume >= total_rows:
+                logger.info(
+                    f"Caption cache already covers all rows; skipping stage."
+                )
+            processed = caption_resume
+            for batch in _resume_batches(
+                iter_batches(), resume_count=caption_resume, stage="Moondream"
+            ):
+                logger.info(f"[Moondream] {processed} / {total_rows}")
+                if not batch.images:
+                    del batch
+                    gc.collect()
+                    continue
+                caption_cache.append_many(
+                    _run_caption(batch.images, unittest=unittest)
+                )
+                processed += len(batch.images)
                 del batch
                 gc.collect()
-                continue
-            caption_cache.append_many(
-                _run_caption(batch.images, unittest=unittest)
+            caption_cache.finalize()
+            if processed != total_rows:
+                raise RuntimeError(
+                    "Caption stage processed an unexpected number of rows."
+                )
+            gpu_memory_toc(
+                "Moondream caption inference",
+                caption_before,
+                (getattr(moondream_module, "_load_moondream_model", None),),
             )
-            processed += len(batch.images)
-            del batch
-            gc.collect()
-        caption_cache.finalize()
-        if processed != total_rows:
-            raise RuntimeError(
-                "Caption stage processed an unexpected number of rows."
-            )
-        gpu_memory_toc(
-            "Moondream caption inference",
-            caption_before,
-            (getattr(moondream_module, "_load_moondream_model", None),),
-        )
+        else:
+            logger.info("Skipping caption stage (not requested).")
 
         # Stage 2: Listing
-        logger.info(f"Running Qwen2.5-VL listing inference ...")
-        prompt = qwen_prompt or qwen2_5_vl.DEFAULT_TEXT
-        listing_before = gpu_memory_tic()
-        listing_resume = min(listing_cache.count, total_rows) if resume else 0
-        if resume and listing_cache.count > total_rows:
-            logger.warning(
-                "Listing cache contains %d rows but dataset has %d; "
-                "only the first %d rows will be reused.",
-                listing_cache.count,
-                total_rows,
-                listing_resume,
-            )
-        if resume and listing_resume >= total_rows:
-            logger.info(f"Listing cache already covers all rows; skipping stage.")
-        processed = listing_resume
-        for batch in _resume_batches(
-            iter_batches(), resume_count=listing_resume, stage="Qwen2.5-VL"
-        ):
-            logger.info(f"[Qwen2.5-VL] {processed} / {total_rows}")
-            if not batch.images:
+        if "listing" in stages_to_run:
+            logger.info(f"Running Qwen2.5-VL listing inference ...")
+            prompt = qwen_prompt or qwen2_5_vl.DEFAULT_TEXT
+            listing_before = gpu_memory_tic()
+            listing_resume = min(listing_cache.count, total_rows) if resume else 0
+            if resume and listing_cache.count > total_rows:
+                logger.warning(
+                    "Listing cache contains %d rows but dataset has %d; "
+                    "only the first %d rows will be reused.",
+                    listing_cache.count,
+                    total_rows,
+                    listing_resume,
+                )
+            if resume and listing_resume >= total_rows:
+                logger.info(
+                    f"Listing cache already covers all rows; skipping stage."
+                )
+            processed = listing_resume
+            for batch in _resume_batches(
+                iter_batches(), resume_count=listing_resume, stage="Qwen2.5-VL"
+            ):
+                logger.info(f"[Qwen2.5-VL] {processed} / {total_rows}")
+                if not batch.images:
+                    del batch
+                    gc.collect()
+                    continue
+                listing_cache.append_many(
+                    _run_listing(batch.images, unittest=unittest, prompt=prompt)
+                )
+                processed += len(batch.images)
                 del batch
                 gc.collect()
-                continue
-            listing_cache.append_many(
-                _run_listing(batch.images, unittest=unittest, prompt=prompt)
+            listing_cache.finalize()
+            if processed != total_rows:
+                raise RuntimeError(
+                    "Listing stage processed an unexpected number of rows."
+                )
+            gpu_memory_toc(
+                "Qwen2.5-VL listing inference",
+                listing_before,
+                (getattr(qwen2_5_vl, "_load_qwen_model", None),),
             )
-            processed += len(batch.images)
-            del batch
-            gc.collect()
-        listing_cache.finalize()
-        if processed != total_rows:
-            raise RuntimeError(
-                "Listing stage processed an unexpected number of rows."
-            )
-        gpu_memory_toc(
-            "Qwen2.5-VL listing inference",
-            listing_before,
-            (getattr(qwen2_5_vl, "_load_qwen_model", None),),
-        )
+        else:
+            logger.info("Skipping listing stage (not requested).")
 
         # Stage 3: Detection (depends on listing results)
-        logger.info(f"Running GroundingDINO detection with listing prompts ...")
-        detection_before = gpu_memory_tic()
-        listing_iter_for_detection = listing_cache.iter_results()
-        detection_resume = min(detection_cache.count, total_rows) if resume else 0
-        if resume and detection_cache.count > total_rows:
-            logger.warning(
-                "Detection cache contains %d rows but dataset has %d; "
-                "only the first %d rows will be reused.",
-                detection_cache.count,
-                total_rows,
-                detection_resume,
+        if "detection" in stages_to_run:
+            if "listing" not in stages_to_run and listing_cache.count < total_rows:
+                raise RuntimeError(
+                    "Detection stage requires listing results; rerun with the "
+                    "listing task or ensure listing cache is complete."
+                )
+            logger.info(
+                f"Running GroundingDINO detection with listing prompts ..."
             )
-        if detection_resume:
-            skipped_prompts = 0
-            while skipped_prompts < detection_resume:
-                entry = next(listing_iter_for_detection, None)
-                if entry is None:
+            detection_before = gpu_memory_tic()
+            listing_iter_for_detection = listing_cache.iter_results()
+            detection_resume = min(detection_cache.count, total_rows) if resume else 0
+            if resume and detection_cache.count > total_rows:
+                logger.warning(
+                    "Detection cache contains %d rows but dataset has %d; "
+                    "only the first %d rows will be reused.",
+                    detection_cache.count,
+                    total_rows,
+                    detection_resume,
+                )
+            if detection_resume:
+                skipped_prompts = 0
+                while skipped_prompts < detection_resume:
+                    entry = next(listing_iter_for_detection, None)
+                    if entry is None:
+                        raise RuntimeError(
+                            "Detection resume mismatch: not enough listing prompts cached."
+                        )
+                    skipped_prompts += 1
+            if resume and detection_resume >= total_rows:
+                logger.info(
+                    f"Detection cache already covers all rows; skipping stage."
+                )
+            processed = detection_resume
+            for batch in _resume_batches(
+                iter_batches(),
+                resume_count=detection_resume,
+                stage="GroundingDINO",
+            ):
+                logger.info(f"[GroundingDINO] {processed} / {total_rows}")
+                if not batch.images:
+                    del batch
+                    gc.collect()
+                    continue
+                span = len(batch.images)
+                listing_slice = list(
+                    itertools.islice(listing_iter_for_detection, span)
+                )
+                if len(listing_slice) != span:
                     raise RuntimeError(
-                        "Detection resume mismatch: not enough listing prompts cached."
+                        "Detection stage could not align listing results with images."
                     )
-                skipped_prompts += 1
-        if resume and detection_resume >= total_rows:
-            logger.info(f"Detection cache already covers all rows; skipping stage.")
-        processed = detection_resume
-        for batch in _resume_batches(
-            iter_batches(), resume_count=detection_resume, stage="GroundingDINO"
-        ):
-            logger.info(f"[GroundingDINO] {processed} / {total_rows}")
-            if not batch.images:
+                detection_cache.append_many(
+                    _run_detection(batch.images, listing_slice, unittest=unittest)
+                )
+                processed += span
                 del batch
                 gc.collect()
-                continue
-            span = len(batch.images)
-            listing_slice = list(itertools.islice(listing_iter_for_detection, span))
-            if len(listing_slice) != span:
+            detection_cache.finalize()
+            if processed != total_rows:
                 raise RuntimeError(
-                    "Detection stage could not align listing results with images."
+                    "Detection stage processed an unexpected number of rows."
                 )
-            detection_cache.append_many(
-                _run_detection(batch.images, listing_slice, unittest=unittest)
+            gpu_memory_toc(
+                "GroundingDINO detection",
+                detection_before,
+                (getattr(groundingdino_module, "_load_groundingdino_model", None),),
             )
-            processed += span
-            del batch
-            gc.collect()
-        detection_cache.finalize()
-        if processed != total_rows:
-            raise RuntimeError(
-                "Detection stage processed an unexpected number of rows."
-            )
-        gpu_memory_toc(
-            "GroundingDINO detection",
-            detection_before,
-            (getattr(groundingdino_module, "_load_groundingdino_model", None),),
-        )
+        else:
+            logger.info("Skipping detection stage (not requested).")
 
         # Stage 4: Segmentation
-        logger.info(f"Running InternImage segmentation ...")
-        segmentation_before = gpu_memory_tic()
-        segmentation_resume = (
-            min(segmentation_cache.count, total_rows) if resume else 0
-        )
-        if resume and segmentation_cache.count > total_rows:
-            logger.warning(
-                "Segmentation cache contains %d rows but dataset has %d; "
-                "only the first %d rows will be reused.",
-                segmentation_cache.count,
-                total_rows,
-                segmentation_resume,
+        if "segmentation" in stages_to_run:
+            logger.info(f"Running InternImage segmentation ...")
+            segmentation_before = gpu_memory_tic()
+            segmentation_resume = (
+                min(segmentation_cache.count, total_rows) if resume else 0
             )
-        if resume and segmentation_resume >= total_rows:
-            logger.info(f"Segmentation cache already covers all rows; skipping stage.")
-        processed = segmentation_resume
-        for batch in _resume_batches(
-            iter_batches(), resume_count=segmentation_resume, stage="Internimage"
-        ):
-            logger.info(f"[Internimage] {processed} / {total_rows}")
-            if not batch.images:
+            if resume and segmentation_cache.count > total_rows:
+                logger.warning(
+                    "Segmentation cache contains %d rows but dataset has %d; "
+                    "only the first %d rows will be reused.",
+                    segmentation_cache.count,
+                    total_rows,
+                    segmentation_resume,
+                )
+            if resume and segmentation_resume >= total_rows:
+                logger.info(
+                    f"Segmentation cache already covers all rows; skipping stage."
+                )
+            processed = segmentation_resume
+            for batch in _resume_batches(
+                iter_batches(), resume_count=segmentation_resume, stage="Internimage"
+            ):
+                logger.info(f"[Internimage] {processed} / {total_rows}")
+                if not batch.images:
+                    del batch
+                    gc.collect()
+                    continue
+                segmentation_cache.append_many(
+                    _run_segmentation(batch.images, unittest=unittest)
+                )
+                processed += len(batch.images)
                 del batch
                 gc.collect()
-                continue
-            segmentation_cache.append_many(
-                _run_segmentation(batch.images, unittest=unittest)
+            segmentation_cache.finalize()
+            if processed != total_rows:
+                raise RuntimeError(
+                    "Segmentation stage processed an unexpected number of rows."
+                )
+            gpu_memory_toc(
+                "Internimage segmentation",
+                segmentation_before,
+                (getattr(semseg_module, "_load_internimage_model", None),),
             )
-            processed += len(batch.images)
-            del batch
-            gc.collect()
-        segmentation_cache.finalize()
-        if processed != total_rows:
-            raise RuntimeError(
-                "Segmentation stage processed an unexpected number of rows."
-            )
-        gpu_memory_toc(
-            "Internimage segmentation",
-            segmentation_before,
-            (getattr(semseg_module, "_load_internimage_model", None),),
-        )
+        else:
+            logger.info("Skipping segmentation stage (not requested).")
 
         # Stage 5: Depth
-        logger.info(f"Running ML-Depth-Pro depth estimation ...")
-        depth_before = gpu_memory_tic()
-        depth_resume = min(depth_cache.count, total_rows) if resume else 0
-        if resume and depth_cache.count > total_rows:
-            logger.warning(
-                "Depth cache contains %d rows but dataset has %d; "
-                "only the first %d rows will be reused.",
-                depth_cache.count,
-                total_rows,
-                depth_resume,
-            )
-        if resume and depth_resume >= total_rows:
-            logger.info(f"Depth cache already covers all rows; skipping stage.")
-        processed = depth_resume
-        for batch in _resume_batches(
-            iter_batches(), resume_count=depth_resume, stage="ML-Depth-Pro"
-        ):
-            logger.info(f"[ML-Depth-Pro] {processed} / {total_rows}")
-            if not batch.images:
+        if "depth" in stages_to_run:
+            logger.info(f"Running ML-Depth-Pro depth estimation ...")
+            depth_before = gpu_memory_tic()
+            depth_resume = min(depth_cache.count, total_rows) if resume else 0
+            if resume and depth_cache.count > total_rows:
+                logger.warning(
+                    "Depth cache contains %d rows but dataset has %d; "
+                    "only the first %d rows will be reused.",
+                    depth_cache.count,
+                    total_rows,
+                    depth_resume,
+                )
+            if resume and depth_resume >= total_rows:
+                logger.info(
+                    f"Depth cache already covers all rows; skipping stage."
+                )
+            processed = depth_resume
+            for batch in _resume_batches(
+                iter_batches(), resume_count=depth_resume, stage="ML-Depth-Pro"
+            ):
+                logger.info(f"[ML-Depth-Pro] {processed} / {total_rows}")
+                if not batch.images:
+                    del batch
+                    gc.collect()
+                    continue
+                for image in batch.images:
+                    depth_cache.append(
+                        ml_depth_pro_module._depth_infer(image, unittest=unittest)  # type: ignore[attr-defined]
+                    )
+                processed += len(batch.images)
                 del batch
                 gc.collect()
-                continue
-            for image in batch.images:
-                depth_cache.append(
-                    ml_depth_pro_module._depth_infer(image, unittest=unittest)  # type: ignore[attr-defined]
+            depth_cache.finalize()
+            if processed != total_rows:
+                raise RuntimeError(
+                    "Depth stage processed an unexpected number of rows."
                 )
-            processed += len(batch.images)
-            del batch
-            gc.collect()
-        depth_cache.finalize()
-        if processed != total_rows:
-            raise RuntimeError(
-                "Depth stage processed an unexpected number of rows."
+            gpu_memory_toc(
+                "ML-Depth-Pro depth estimation",
+                depth_before,
+                (getattr(ml_depth_pro_module, "_load_depth_pro_model", None),),
             )
-        gpu_memory_toc(
-            "ML-Depth-Pro depth estimation",
-            depth_before,
-            (getattr(ml_depth_pro_module, "_load_depth_pro_model", None),),
-        )
+        else:
+            logger.info("Skipping depth stage (not requested).")
 
         # Final write pass aggregating all stage outputs
         writer = LanceDatasetWriter(output_dataset)
         processed = 0
 
-        caption_iter = caption_cache.iter_results()
-        listing_iter = listing_cache.iter_results()
-        detection_iter = detection_cache.iter_results()
-        segmentation_iter = segmentation_cache.iter_results()
-        depth_iter = depth_cache.iter_results()
+        caption_iter = caption_cache.iter_results() if "caption" in stages_to_run else None
+        listing_iter = listing_cache.iter_results() if "listing" in stages_to_run else None
+        detection_iter = (
+            detection_cache.iter_results() if "detection" in stages_to_run else None
+        )
+        segmentation_iter = (
+            segmentation_cache.iter_results()
+            if "segmentation" in stages_to_run
+            else None
+        )
+        depth_iter = depth_cache.iter_results() if "depth" in stages_to_run else None
 
         for batch_index, batch in enumerate(iter_batches(), start=1):
             table = batch.table
@@ -1237,50 +1324,71 @@ def main(
                 del batch
                 continue
 
-            caption_slice = list(itertools.islice(caption_iter, span))
-            listing_slice = list(itertools.islice(listing_iter, span))
-            detection_slice = list(itertools.islice(detection_iter, span))
-            segmentation_slice = list(itertools.islice(segmentation_iter, span))
-            depth_slice = list(itertools.islice(depth_iter, span))
+            column_map = {}
 
-            if not all(
-                len(chunk) == span
-                for chunk in (
-                    caption_slice,
-                    listing_slice,
-                    detection_slice,
-                    segmentation_slice,
-                    depth_slice,
-                )
-            ):
-                raise RuntimeError(
-                    "Final write pass received mismatched result chunk sizes."
+            if caption_iter is not None:
+                caption_slice = list(itertools.islice(caption_iter, span))
+                if len(caption_slice) != span:
+                    raise RuntimeError(
+                        "Final write pass received mismatched caption chunk size."
+                    )
+                column_map["cortexia_caption"] = _dicts_to_struct_array(
+                    caption_slice
                 )
 
-            # reduce segmentation_slice size
-            for item in segmentation_slice:
-                assert item["mask"].max() <= 255
-                item["mask"] = item["mask"].astype(np.uint8)
+            listing_slice: List[dict] = []
+            if listing_iter is not None:
+                listing_slice = list(itertools.islice(listing_iter, span))
+                if len(listing_slice) != span:
+                    raise RuntimeError(
+                        "Final write pass received mismatched listing chunk size."
+                    )
+                column_map["cortexia_tags"] = _dicts_to_struct_array(
+                    listing_slice
+                )
 
-            # reduce depth_slice size
-            for item in depth_slice:
-                item.pop("processing_time_ms")
-                item.pop("mean_depth")
-                item.pop("model_name")
-                if "encoding" in item["map"]:
-                    # convert to uint16 png compress
-                    depth_map = decode_depth_map(item.get("map"))
-                    item["map"] = encode_depth_map_uint16(depth_map)
-            
-            column_map = {
-                "cortexia_caption": _dicts_to_struct_array(caption_slice),
-                "cortexia_tags": _dicts_to_struct_array(listing_slice),
-                "cortexia_detection": _dicts_to_struct_array(detection_slice),
-                "cortexia_segmentation": _dicts_to_struct_array(
+            if detection_iter is not None:
+                detection_slice = list(itertools.islice(detection_iter, span))
+                if len(detection_slice) != span:
+                    raise RuntimeError(
+                        "Final write pass received mismatched detection chunk size."
+                    )
+                column_map["cortexia_detection"] = _dicts_to_struct_array(
+                    detection_slice
+                )
+
+            if segmentation_iter is not None:
+                segmentation_slice = list(itertools.islice(segmentation_iter, span))
+                if len(segmentation_slice) != span:
+                    raise RuntimeError(
+                        "Final write pass received mismatched segmentation chunk size."
+                    )
+                for item in segmentation_slice:
+                    assert item["mask"].max() <= 255
+                    item["mask"] = item["mask"].astype(np.uint8)
+
+                column_map["cortexia_segmentation"] = _dicts_to_struct_array(
                     segmentation_slice
-                ),
-                "cortexia_depth": _dicts_to_struct_array(depth_slice),
-            }
+                )
+
+            if depth_iter is not None:
+                depth_slice = list(itertools.islice(depth_iter, span))
+                if len(depth_slice) != span:
+                    raise RuntimeError(
+                        "Final write pass received mismatched depth chunk size."
+                    )
+                for item in depth_slice:
+                    item.pop("processing_time_ms")
+                    item.pop("mean_depth")
+                    item.pop("model_name")
+                    if "encoding" in item["map"]:
+                        # convert to uint16 png compress
+                        depth_map = decode_depth_map(item.get("map"))
+                        item["map"] = encode_depth_map_uint16(depth_map)
+
+                column_map["cortexia_depth"] = _dicts_to_struct_array(
+                    depth_slice
+                )
 
             annotated = _append_columns(table, column_map)
             writer.write_batch(annotated)
