@@ -44,5 +44,12 @@ def get_repo(name) -> Union[str, bool]:
 
 def install(name: str):
     root = _try_to_find_install_x()
-    bash_file = os.path.join(root, "", f"{name}.sh")
+    bash_filename = f"{name}.sh"
+    bash_file = None
+    for dirpath, _, filenames in os.walk(root):
+        if bash_filename in filenames:
+            bash_file = os.path.join(dirpath, bash_filename)
+            break
+    if not bash_file:
+        print_and_exit(f"{bash_filename} not found under {root}")
     os.system(bash_file)
