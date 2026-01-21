@@ -2,7 +2,7 @@
 
 env:
 	pip3 install -e ".[all]"
-	pre-commit install
+	# pre-commit install
 
 lint:
 	pre-commit run --all-files

@@ -94,7 +94,7 @@ def _load_moondream_model():
         model_id,
         revision=revision,
         trust_remote_code=True,
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map=device_map,
     )
     model.eval()
@@ -113,6 +113,51 @@ def _load_moondream_model():
         "caption_length": "long",
     }
     return model, settings
+
+
+_original_moondream_clear = _load_moondream_model.cache_clear
+
+
+def _moondream_cache_clear() -> None:
+    if _load_moondream_model.cache_info().currsize:
+        try:
+            model, _ = _load_moondream_model()
+            if TORCH_INSTALLED:
+                import torch
+                import gc
+
+                try:
+                    if hasattr(model, "to"):
+                        model.to("cpu")
+                except Exception:
+                    pass
+                if torch.cuda.is_available():
+                    try:
+                        torch.cuda.empty_cache()
+                        ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+                        if callable(ipc_collect):
+                            ipc_collect()
+                    except Exception:
+                        pass
+                del model
+                gc.collect()
+        except Exception:
+            pass
+    _original_moondream_clear()
+    if TORCH_INSTALLED:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+                if callable(ipc_collect):
+                    ipc_collect()
+        except Exception:
+            pass
+
+
+_load_moondream_model.cache_clear = _moondream_cache_clear  # type: ignore[assignment]
 
 
 @otn_manager.NODE.register(name="moondream")

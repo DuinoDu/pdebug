@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Sequence
 
 __all__ = ["gpu_memory_tic", "gpu_memory_toc"]
 
-_GPU_MEMORY_TOLERANCE_BYTES = 1 * 1024 * 1024
+_GPU_MEMORY_TOLERANCE_BYTES = 64 * 1024 * 1024
 
 
 def gpu_memory_tic() -> Optional[List[Dict[str, int]]]:

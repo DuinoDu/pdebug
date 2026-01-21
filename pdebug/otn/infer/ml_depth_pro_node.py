@@ -55,7 +55,7 @@ def _load_depth_pro_model():
     model = DepthProForDepthEstimation.from_pretrained(
         model_id,
         device_map=device_map,
-        torch_dtype=torch.float16 if has_cuda else torch.float32,
+        dtype=torch.float16 if has_cuda else torch.float32,
     )
     model.eval()
 
@@ -72,6 +72,50 @@ def _load_depth_pro_model():
         "device": device,
     }
     return model, processor, settings
+
+
+_original_depth_cache_clear = _load_depth_pro_model.cache_clear
+
+
+def _depth_cache_clear() -> None:
+    if _load_depth_pro_model.cache_info().currsize:
+        try:
+            model, _, _ = _load_depth_pro_model()
+            if TORCH_INSTALLED:
+                import torch
+                import gc
+
+                if torch.cuda.is_available():
+                    try:
+                        model.to("cpu")  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    try:
+                        torch.cuda.empty_cache()
+                        ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+                        if callable(ipc_collect):
+                            ipc_collect()
+                    except Exception:
+                        pass
+                del model
+                gc.collect()
+        except Exception:
+            pass
+    _original_depth_cache_clear()
+    if TORCH_INSTALLED:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+                if callable(ipc_collect):
+                    ipc_collect()
+        except Exception:
+            pass
+
+
+_load_depth_pro_model.cache_clear = _depth_cache_clear  # type: ignore[assignment]
 
 
 def _depth_infer(image, *, unittest: bool) -> Dict[str, object]:

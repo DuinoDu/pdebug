@@ -56,7 +56,7 @@ def _load_segment_anything_model():
     model = SamModel.from_pretrained(
         model_id,
         device_map=device_map,
-        torch_dtype=torch.float32,
+        dtype=torch.float32,
     )
     processor = SamProcessor.from_pretrained(model_id)
     model.eval()
