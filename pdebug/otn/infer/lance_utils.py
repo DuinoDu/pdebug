@@ -190,6 +190,46 @@ def encode_bitmask(mask: np.ndarray) -> Dict[str, object]:
     }
 
 
+def encode_png_u8(mask: np.ndarray) -> bytes:
+    """Encode a 2D uint8 mask as PNG bytes (single-channel)."""
+    if mask.ndim != 2:
+        raise ValueError("encode_png_u8 expects a 2D mask.")
+    mask_u8 = np.asarray(mask, dtype=np.uint8)
+    if cv2 is not None:
+        ok, buf = cv2.imencode(".png", mask_u8)
+        if not ok:
+            raise ValueError("Failed to encode mask to PNG via OpenCV.")
+        return buf.tobytes()
+    if Image is not None:
+        pil = Image.fromarray(mask_u8, mode="L")
+        out = io.BytesIO()
+        pil.save(out, format="PNG", optimize=True)
+        return out.getvalue()
+    raise RuntimeError("Encoding PNG requires opencv-python or pillow.")
+
+
+def decode_png_u8(data: Union[bytes, bytearray, memoryview]) -> np.ndarray:
+    """Decode PNG bytes into a 2D uint8 mask (single-channel)."""
+    if isinstance(data, memoryview):
+        data = data.tobytes()
+    if isinstance(data, bytearray):
+        data = bytes(data)
+    if not isinstance(data, (bytes,)):
+        raise TypeError(f"decode_png_u8 expects bytes-like, got {type(data)}")
+    if cv2 is not None:
+        arr = np.frombuffer(data, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            raise ValueError("Failed to decode PNG bytes via OpenCV.")
+        if img.ndim == 3:
+            img = img[:, :, 0]
+        return np.asarray(img, dtype=np.uint8)
+    if Image is not None:
+        pil = Image.open(io.BytesIO(data))
+        return np.array(pil.convert("L"), dtype=np.uint8)
+    raise RuntimeError("Decoding PNG requires opencv-python or pillow.")
+
+
 def decode_bitmask(
     payload: Optional[Dict[str, object]]
 ) -> Optional[np.ndarray]:

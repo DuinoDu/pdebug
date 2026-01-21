@@ -27,6 +27,8 @@ from pdebug.otn.infer.lance_utils import (
     LanceBatch,
     compute_image_stats,
     decode_bitmask,
+    decode_png_u8,
+    encode_png_u8,
     decode_depth_map,
     encode_depth_map_uint16,
     decode_depth_map_uint16,
@@ -383,9 +385,13 @@ def _preview_rows(table: pa.Table, limit: int = 3) -> None:
             "cortexia_segmentation" in summary
             and "mask" in summary["cortexia_segmentation"]
         ):
-            summary["cortexia_segmentation"]["mask"] = str(
-                summary["cortexia_segmentation"]["mask"]
-            )[-100:]
+            mask_value = summary["cortexia_segmentation"]["mask"]
+            if isinstance(mask_value, (bytes, bytearray, memoryview)):
+                summary["cortexia_segmentation"]["mask"] = (
+                    f"<png_bytes len={len(mask_value)}>"
+                )
+            else:
+                summary["cortexia_segmentation"]["mask"] = str(mask_value)[-100:]
         if "cortexia_depth" in summary and "map" in summary["cortexia_depth"]:
             summary["cortexia_depth"]["map"] = str(
                 summary["cortexia_depth"]["map"]
@@ -497,9 +503,11 @@ def _run_segmentation(
             height, width = image.shape[:2]
             mask = np.zeros((height, width), dtype=np.uint8)
             mask[: height // 2 or 1, : width // 2 or 1] = 1
+            mask_png = encode_png_u8(mask)
             results.append(
                 {
-                    "mask": mask.reshape(-1),
+                    "encoding": "png_u8",
+                    "mask": mask_png,
                     "model": "internimage_DCNv4_stub",
                     "shape": mask.shape,
                 }
@@ -510,11 +518,14 @@ def _run_segmentation(
             raise RuntimeError("Failed to load InternImage segmentation model.")
         model, infer_func, _ = model_bundle
         result = infer_func(model, image)[0]
+        mask = np.asarray(result, dtype=np.uint8)
+        mask_png = encode_png_u8(mask)
         results.append(
             {
-                "mask": result.reshape(-1),
+                "encoding": "png_u8",
+                "mask": mask_png,
                 "model": "internimage_DCNv4",
-                "shape": result.shape,
+                "shape": mask.shape,
             }
         )
     return results
@@ -614,7 +625,23 @@ def _render_segmentation(
 ) -> np.ndarray:
     from pdebug.visp import draw as vis_draw
 
-    mask = np.asarray(payload["mask"]).reshape(payload["shape"])
+    if not isinstance(payload, dict):
+        return _append_text_panel(image, "[Segmentation]", ["No segmentation."])
+
+    mask_value = payload.get("mask")
+    mask: Optional[np.ndarray] = None
+    if isinstance(mask_value, (bytes, bytearray, memoryview)):
+        mask = decode_png_u8(mask_value)
+    else:
+        shape = payload.get("shape")
+        if shape is not None:
+            mask = np.asarray(mask_value, dtype=np.uint8).reshape(shape)
+        else:
+            mask = np.asarray(mask_value, dtype=np.uint8)
+
+    if mask is None or mask.size == 0:
+        return _append_text_panel(image, "[Segmentation]", ["No segmentation."])
+
     rendered = vis_draw.semseg(
         mask,
         image=image,
@@ -1364,8 +1391,22 @@ def main(
                         "Final write pass received mismatched segmentation chunk size."
                     )
                 for item in segmentation_slice:
-                    assert item["mask"].max() <= 255
-                    item["mask"] = item["mask"].astype(np.uint8)
+                    # Store segmentation mask as single-channel PNG bytes to reduce space.
+                    # Backward compatibility: if cache contains the old flattened array,
+                    # upgrade it here before writing to Lance.
+                    encoding = item.get("encoding")
+                    if encoding == "png_u8":
+                        continue
+
+                    mask_value = item.get("mask")
+                    shape = item.get("shape")
+                    if shape is None:
+                        raise ValueError(
+                            "Segmentation payload missing `shape` for mask upgrade."
+                        )
+                    mask_2d = np.asarray(mask_value, dtype=np.uint8).reshape(shape)
+                    item["mask"] = encode_png_u8(mask_2d)
+                    item["encoding"] = "png_u8"
 
                 column_map["cortexia_segmentation"] = _dicts_to_struct_array(
                     segmentation_slice
