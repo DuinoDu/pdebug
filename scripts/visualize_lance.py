@@ -32,6 +32,9 @@ import cv2
 import numpy as np
 import typer
 from loguru import logger
+import lance
+import pyarrow as pa
+import io
 
 try:
     from PIL import Image
@@ -107,51 +110,112 @@ def _visualize_models(
     global_index = 0
     visualized_count = 0
 
-    # Create iterator for batches
-    batch_iterator = _iter_lance_batches(
-        dataset_path,
-        image_col=image_col,
-        reader_kwargs=reader_kwargs,
-        batch_size=batch_size,
-        timestamp_col=timestamp_col,
-        video_id_col=video_id_col,
-        frame_num_col=frame_num_col,
-        trigger=trigger,
-    )
+    ds = lance.dataset(str(dataset_path))
+    scanner = ds.scanner(batch_size=batch_size)
+    
 
-    for batch_index, batch in enumerate(batch_iterator, start=1):
-        if not batch.images:
-            continue
+    for batch_index, batch in enumerate(scanner.to_batches(), start=1):
+        batch_len = batch.num_rows
 
         logger.info(
-            f"Processing batch {batch_index}: {len(batch.images)} images "
+            f"Processing batch {batch_index}: {batch_len} rows "
             f"(total visualized: {visualized_count})"
         )
 
-        for local_index, entry in enumerate(batch.metadata):
+        rows = batch.to_pylist()
+
+        for local_index, entry in enumerate(rows):
+            # Check trigger if provided
+            entry_trigger = entry.get("trigger")
+            if trigger:
+                current_trigger = entry_trigger
+                while isinstance(current_trigger, (list, tuple)) and len(current_trigger) > 0:
+                    current_trigger = current_trigger[0]
+                if str(current_trigger) != trigger:
+                    continue
+
             # Apply stride: only visualize if global_index % stride == 0
             if global_index % stride != 0:
                 global_index += 1
                 continue
 
-            image = entry.get("image")
-            if not isinstance(image, np.ndarray):
+            # Decode image only when needed
+            image_bytes = entry.get(image_col)
+            if image_bytes is None:
                 logger.warning(
-                    f"Skipping row {global_index}: image is missing or invalid"
+                    f"Skipping row {global_index}: image column '{image_col}' missing"
+                )
+                global_index += 1
+                continue
+            
+            image = None
+            try:
+                # Try PIL
+                if 'PIL' in sys.modules and hasattr(sys.modules.get('PIL'), 'Image'):
+                    # Need to read as bytes IO
+                    # entry[image_col] is bytes
+                    with sys.modules['PIL'].Image.open(io.BytesIO(image_bytes)) as handle:
+                        image = np.asarray(handle.convert("RGB"))
+                else:
+                    # CV2 fallback
+                    nparr = np.frombuffer(image_bytes, np.uint8)
+                    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    if image is not None:
+                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            except Exception as e:
+                logger.warning(f"Failed to decode image at row {global_index}: {e}")
+
+            if image is None:
+                logger.warning(
+                    f"Skipping row {global_index}: image decode failed"
                 )
                 global_index += 1
                 continue
 
+            # Overlay action_tag on the original image if present
+            img_for_orig = image.copy()
+            action_tag = entry.get("action_tag")
+            print(f"action_tag: {action_tag}")
+            if action_tag:
+                text = str(action_tag)
+                # Position: top-left with some padding
+                x, y = 10, 30
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                scale = 1.0
+                thickness = 2
+                # Draw black outline for visibility
+                cv2.putText(
+                    img_for_orig,
+                    text,
+                    (x, y),
+                    font,
+                    scale,
+                    (0, 0, 0),
+                    thickness + 3,
+                    cv2.LINE_AA,
+                )
+                # Draw red text (RGB: 255, 0, 0)
+                cv2.putText(
+                    img_for_orig,
+                    text,
+                    (x, y),
+                    font,
+                    scale,
+                    (255, 0, 0),
+                    thickness,
+                    cv2.LINE_AA,
+                )
+
             try:
                 visualizations = [
-                    _render_original(image),
-                    _render_caption(image, entry.get("cortexia_caption")),
-                    _render_tags(image, entry.get("cortexia_tags")),
-                    _render_detection(image, entry.get("cortexia_detection")),
+                    _render_original(img_for_orig),
+                    # _render_caption(image, entry.get("cortexia_caption")),
+                    # _render_tags(image, entry.get("cortexia_tags")),
+                    # _render_detection(image, entry.get("cortexia_detection")),
                     _render_segmentation(
                         image, entry.get("cortexia_segmentation")
                     ),
-                    _render_depth(image, entry.get("cortexia_depth")),
+                    # _render_depth(image, entry.get("cortexia_depth")),
                 ]
             except Exception as exc:  # pragma: no cover - defensive fallback
                 typer.secho(
@@ -160,14 +224,14 @@ def _visualize_models(
                 )
                 visualizations = [
                     _append_text_panel(image, "[Original]", [f"Error: {exc}"]),
-                    _render_error(image, "[Caption]", exc),
-                    _render_error(image, "[Listing]", exc),
-                    _render_error(image, "[Detection]", exc),
+                    # _render_error(image, "[Caption]", exc),
+                    # _render_error(image, "[Listing]", exc),
+                    # _render_error(image, "[Detection]", exc),
                     _render_error(image, "[Segmentation]", exc),
-                    _render_error(image, "[Depth]", exc),
+                    # _render_error(image, "[Depth]", exc),
                 ]
 
-            combined = _combine_visualizations(visualizations)
+            combined = _combine_visualizations(visualizations, cows=2, cols=1)
             frame_name = entry.get("image_name") or f"frame_{global_index:06d}"
             safe_name = Path(str(frame_name)).stem
             output_path = output_dir / f"{global_index:04d}_{safe_name}.png"
@@ -184,6 +248,7 @@ def _visualize_models(
 
         # Clean up batch to free memory
         del batch
+        del rows
         import gc
 
         gc.collect()
@@ -254,7 +319,7 @@ def main(
         help="Number of images to load per batch to avoid OOM.",
     ),
     preview: bool = typer.Option(
-        True,
+        False,
         "--preview/--no-preview",
         help="Preview first 3 rows of the dataset before visualization.",
     ),

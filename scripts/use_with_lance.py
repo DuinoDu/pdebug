@@ -359,9 +359,6 @@ class LanceDatasetWriter:
             self._dataset = lance.dataset(str(self.output_path))
         self._dataset.insert(table, mode="append")
 
-_VIS_GRID_ROWS = 3
-_VIS_GRID_COLS = 2
-
 
 def _preview_rows(table: pa.Table, limit: int = 3) -> None:
     rows = min(limit, len(table))
@@ -625,19 +622,24 @@ def _render_segmentation(
 ) -> np.ndarray:
     from pdebug.visp import draw as vis_draw
 
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not payload:
         return _append_text_panel(image, "[Segmentation]", ["No segmentation."])
 
     mask_value = payload.get("mask")
+    encoding = payload.get("encoding", "")
     mask: Optional[np.ndarray] = None
-    if isinstance(mask_value, (bytes, bytearray, memoryview)):
-        mask = decode_png_u8(mask_value)
+
+    if encoding == "png_u8" or isinstance(mask_value, (bytes, bytearray, memoryview)):
+        if isinstance(mask_value, (bytes, bytearray, memoryview)):
+            mask = decode_png_u8(mask_value)
+    elif encoding == "bitmask":
+        mask = decode_bitmask(payload)
     else:
         shape = payload.get("shape")
-        if shape is not None:
-            mask = np.asarray(mask_value, dtype=np.uint8).reshape(shape)
-        else:
+        if mask_value is not None:
             mask = np.asarray(mask_value, dtype=np.uint8)
+            if shape is not None:
+                mask = mask.reshape(shape)
 
     if mask is None or mask.size == 0:
         return _append_text_panel(image, "[Segmentation]", ["No segmentation."])
@@ -665,13 +667,16 @@ def _render_depth(
         value = depth_data.get(key)
         if isinstance(value, (float, int)):
             lines.append(f"{key}: {float(value):.3f}")
-    
-    if "float16" in depth_data["map"]["encoding"]:
-        depth_map = decode_depth_map(depth_data.get("map")) if depth_data else None
-    elif "uint16_png" in depth_data["map"]["encoding"]:
-        depth_map = decode_depth_map_uint16(depth_data.get("map")) if depth_data else None
-    else:
-        raise NotImplementedError
+
+    map_data = depth_data.get("map")
+    depth_map = None
+    if isinstance(map_data, dict):
+        encoding = map_data.get("encoding", "")
+        if "float16" in encoding:
+            depth_map = decode_depth_map(map_data)
+        elif "uint16_png" in encoding:
+            depth_map = decode_depth_map_uint16(map_data)
+
     if depth_map is None:
         return _append_text_panel(image, "[Depth]", lines or ["No depth map"])
 
@@ -707,10 +712,9 @@ def _render_depth(
     )
 
 
-def _combine_visualizations(images: Sequence[np.ndarray]) -> np.ndarray:
+def _combine_visualizations(images: Sequence[np.ndarray], rows=3, cols=2) -> np.ndarray:
     if not images:
         raise ValueError("No visualization images provided.")
-    rows, cols = _VIS_GRID_ROWS, _VIS_GRID_COLS
     cell_height = max(img.shape[0] for img in images)
     cell_width = max(img.shape[1] for img in images)
 

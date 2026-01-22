@@ -577,6 +577,7 @@ def main():
     parser.add_argument('--skip', type=int, default=100, help='Skip N points between orientation arrows (default: 10) for visualization')
     parser.add_argument('--threshold', type=float, default=0.01, help='Velocity threshold for stop detection (default: 0.1) for classification')
     parser.add_argument('--future', type=int, default=3, help='Number of future points to use for orientation comparison (default: 3) for classification')
+    parser.add_argument('--separate-triggers', action='store_true', help='Visualize each trigger segment separately')
     
     args = parser.parse_args()
     
@@ -659,8 +660,28 @@ def main():
     
     # Create visualization if not disabled
     if not args.no_viz:
-        print(f"Creating visualization as {args.output}...")
-        visualize_trajectory(points, args.output, args.skip, args.future)
+        if args.separate_triggers:
+            # Group points by trigger
+            from collections import defaultdict
+            trigger_groups = defaultdict(list)
+            for p in points:
+                trigger_groups[p.trigger].append(p)
+            
+            print(f"Creating separate visualizations for {len(trigger_groups)} trigger segments...")
+            for trigger, group_points in trigger_groups.items():
+                trigger_str = str(trigger) if trigger is not None else "None"
+                # Filter out illegal filename characters
+                safe_trigger = "".join([c for c in trigger_str if c.isalnum() or c in (' ', '.', '_')]).strip()
+                safe_trigger = safe_trigger.replace(' ', '_')
+                
+                output_base = args.output.rsplit('.', 1)
+                trigger_output = f"{output_base[0]}_{safe_trigger}.{output_base[1]}"
+                
+                print(f"  Visualizing trigger '{trigger_str}' -> {trigger_output}")
+                visualize_trajectory(group_points, trigger_output, args.skip, args.future)
+        else:
+            print(f"Creating visualization as {args.output}...")
+            visualize_trajectory(points, args.output, args.skip, args.future)
     
     print("Analysis complete!")
 
