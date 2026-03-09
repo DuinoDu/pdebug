@@ -21,7 +21,7 @@ except Exception as e:
     Client = None
 
 LABEL_STUDIO_URL = "http://localhost:8080"
-API_KEY = "09976d25977e93d3f1bfd2be4e20ae14caa93bdd"
+API_KEY = "<YOUR_LABEL_STUDIO_API_KEY>"
 
 
 def run_server(imgdir, port):
