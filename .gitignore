@@ -63,3 +63,8 @@ build
 !pdebug/templates/static/disc.png
 .runnb
 .cache
+
+# conductor
+.conductor/worktrees
+.conductor/state
+conductor.log
