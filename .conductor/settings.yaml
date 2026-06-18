@@ -9,7 +9,4 @@ worktree:
   sync_submodules: true
   # When .gitmodules exists, initialize/update submodules in task worktrees.
   symlink: []
-  # Example: symlink paths from the parent workspace into each worktree
-  # symlink:
-  #   - node_modules
-  #   - .env
+    - .venv 
