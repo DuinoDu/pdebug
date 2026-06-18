@@ -27,6 +27,9 @@ def main(
     intrinsics_path: Optional[str] = None,
     debug: int = 0,
     est_refine_iter: int = 5,
+    track_refine_iter: int = 2,
+    init_min_views: int = 20,
+    init_inplane_step: int = 90,
 ):
     """
     Pose estimation for OnePoseviaGen pipeline using FoundationPose.
@@ -42,26 +45,11 @@ def main(
         debug: Debug level (0-1)
         est_refine_iter: Number of refinement iterations
     """
-    print("WIP")
-
     try:
-        import dr
+        import nvdiffrast.torch as dr
         import trimesh
-        from fpose.estimater import (
-            FoundationPose,
-            PoseRefinePredictor,
-            ScorePredictor,
-        )
     except ImportError as e:
         print(f"Warning: Required modules not available: {e}")
-        ScorePredictor = None
-        PoseRefinePredictor = None
-        FoundationPose = None
-
-    if ScorePredictor is None or FoundationPose is None:
-        raise RuntimeError(
-            "Required modules not installed. Please install OnePoseviaGen."
-        )
 
     # Expand paths
     rgb_path = Path(rgb_path).expanduser().resolve()
@@ -72,6 +60,26 @@ def main(
     repo = Path(repo).expanduser().resolve()
 
     output.mkdir(parents=True, exist_ok=True)
+
+    # FoundationPose repo uses a mix of absolute and relative imports.
+    repo_parent = repo.parent
+    sys.path.insert(0, str(repo))
+    sys.path.insert(0, str(repo_parent))
+
+    try:
+        from foundationpose.estimater import (
+            FoundationPose,
+            PoseRefinePredictor,
+            ScorePredictor,
+        )
+        from foundationpose.Utils import draw_posed_3d_box, draw_xyz_axis
+    except ImportError:
+        from estimater import (
+            FoundationPose,
+            PoseRefinePredictor,
+            ScorePredictor,
+        )
+        from Utils import draw_posed_3d_box, draw_xyz_axis
 
     # Get files
     rgb_files = Input(str(rgb_path), name="imgdir").get_reader().imgfiles
@@ -98,8 +106,14 @@ def main(
     with open(intrinsics_path, "r") as f:
         intrinsics_dict = json.load(f)
 
-    # Get intrinsics for all frames
-    intrinsics = [intrinsics_dict[str(i)] for i in range(len(rgb_files))]
+    if "cam_K" in intrinsics_dict:
+        shared_K = np.asarray(intrinsics_dict["cam_K"], dtype=np.float32)
+        intrinsics = [shared_K.copy() for _ in range(len(rgb_files))]
+    else:
+        intrinsics = []
+        for i in range(len(rgb_files)):
+            K = intrinsics_dict[str(i)]
+            intrinsics.append(np.asarray(K, dtype=np.float32))
 
     # Load 3D model
     mesh = trimesh.load(str(model_path), force="mesh")
@@ -122,11 +136,20 @@ def main(
         debug=debug,
         glctx=glctx,
     )
+    est.make_rotation_grid(
+        min_n_views=init_min_views, inplane_step=init_inplane_step
+    )
 
     # Estimate poses
     poses = []
-    rgbs = []
-    depths = []
+    pose_scores = []
+    initialized = False
+
+    to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
+    bbox = np.stack([-extents / 2, extents / 2], axis=0).reshape(2, 3)
+    pose_dir = output / "pose_viz"
+    pose_dir.mkdir(exist_ok=True)
+    video_writer = None
 
     for frame_id, rgb_file in enumerate(rgb_files):
         color = cv2.imread(str(rgb_file))
@@ -144,113 +167,65 @@ def main(
                     break
         mask = mask.astype(bool)
 
-        # Estimate pose
-        pose = est.register(
-            K=K,
-            rgb=color,
-            depth=depth,
-            ob_mask=mask,
-            iteration=est_refine_iter,
-        )
+        if not initialized:
+            pose = est.register(
+                K=K,
+                rgb=color,
+                depth=depth,
+                ob_mask=mask,
+                iteration=est_refine_iter,
+            )
+            initialized = True
+        else:
+            pose = est.track_one(
+                rgb=color,
+                depth=depth,
+                K=K,
+                iteration=track_refine_iter,
+            )
         poses.append(pose.reshape(4, 4))
+        pose_scores.append(float(frame_id == 0))
 
         # Create visualization
-        to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
-        bbox = np.stack([-extents / 2, extents / 2], axis=0).reshape(2, 3)
         center_pose = pose @ np.linalg.inv(to_origin)
-
-        # Draw 3D box and axes
-        from fpose.estimater import (
-            draw_posed_3d_box_with_depth,
-            draw_xyz_axis_with_depth,
+        rgb_vis = draw_posed_3d_box(
+            K, img=color, ob_in_cam=center_pose, bbox=bbox
         )
-
-        rgb_vis, dep_vis = draw_posed_3d_box_with_depth(
-            K, img=color, depth=depth, ob_in_cam=center_pose, bbox=bbox
-        )
-        rgb_new, dep_new = draw_xyz_axis_with_depth(
+        rgb_vis = draw_xyz_axis(
             rgb_vis,
-            depth=dep_vis,
             ob_in_cam=center_pose,
-            scale=0.3,
+            scale=0.1,
             K=K,
             thickness=3,
             transparency=0,
             is_input_rgb=True,
         )
-
-        rgb_new = np.transpose(rgb_new, (2, 0, 1)) / 255
-        rgbs.append(rgb_new)
-        depths.append(dep_new)
+        pose_img_path = pose_dir / f"pose_{frame_id:06d}.jpg"
+        cv2.imwrite(str(pose_img_path), rgb_vis)
+        if video_writer is None:
+            h, w = rgb_vis.shape[:2]
+            video_writer = cv2.VideoWriter(
+                str(output / "pose_video.mp4"),
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                10.0,
+                (w, h),
+            )
+        video_writer.write(rgb_vis)
 
     # Save poses
-    poses_dict = {
-        str(frame_id): poses[frame_id].tolist()
-        for frame_id in range(len(poses))
-    }
+    poses_dict = {}
+    for frame_id in range(len(poses)):
+        poses_dict[str(frame_id)] = {
+            "T_cam_obj": poses[frame_id].tolist(),
+            "score": pose_scores[frame_id],
+        }
 
     poses_file = output / "poses.json"
     with open(poses_file, "w") as f:
         json.dump(poses_dict, f, indent=2)
 
-    # Save visualization data
-    viz_data = {
-        "poses": poses,
-        "rgbs": rgbs,
-        "depths": depths,
-        "rgb_files": [str(f) for f in rgb_files],
-        "depth_files": [str(f) for f in depth_files],
-        "mask_files": [str(f) for f in mask_files],
-    }
-
-    # Create pose visualization video
-    pose_dir = output / "pose_viz"
-    pose_dir.mkdir(exist_ok=True)
-
-    # Save individual pose visualizations
-    for i, (rgb_file, pose) in enumerate(zip(rgb_files, poses)):
-        color = cv2.imread(str(rgb_file))
-        K = np.array(intrinsics[i])
-
-        to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
-        bbox = np.stack([-extents / 2, extents / 2], axis=0).reshape(2, 3)
-        center_pose = pose @ np.linalg.inv(to_origin)
-
-        # Draw visualization
-        from fpose.estimater import (
-            draw_posed_3d_box_with_depth,
-            draw_xyz_axis_with_depth,
-        )
-
-        rgb_vis, _ = draw_posed_3d_box_with_depth(
-            K, img=color, depth=None, ob_in_cam=center_pose, bbox=bbox
-        )
-        rgb_vis, _ = draw_xyz_axis_with_depth(
-            rgb_vis,
-            depth=None,
-            ob_in_cam=center_pose,
-            scale=0.3,
-            K=K,
-            thickness=3,
-            transparency=0,
-            is_input_rgb=True,
-        )
-
-        pose_img_path = pose_dir / f"pose_{i:06d}.jpg"
-        cv2.imwrite(str(pose_img_path), rgb_vis)
-
-    # Create pose video
-    import imageio
-
-    pose_imgs = []
-    for i in range(len(rgb_files)):
-        img_path = pose_dir / f"pose_{i:06d}.jpg"
-        if img_path.exists():
-            pose_imgs.append(cv2.imread(str(img_path)))
-
-    if pose_imgs:
-        pose_video = output / "pose_video.mp4"
-        imageio.mimsave(str(pose_video), pose_imgs, fps=10)
+    if video_writer is not None:
+        video_writer.release()
 
     typer.echo(
         typer.style(

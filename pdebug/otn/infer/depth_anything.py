@@ -93,6 +93,7 @@ def depth_anything_video(
     save_npz: bool = False,
     save_exr: bool = False,
     save_png: bool = False,
+    metric: bool = False,
 ):
     """Infer video-depth-anything."""
     output = Path(output)
@@ -127,11 +128,13 @@ def depth_anything_video(
     }
 
     video_depth_anything = VideoDepthAnything(**model_configs[encoder])
+    checkpoint_path = (
+        f"{repo}/checkpoints/metric_video_depth_anything_{encoder}.pth"
+        if metric
+        else f"{repo}/checkpoints/video_depth_anything_{encoder}.pth"
+    )
     video_depth_anything.load_state_dict(
-        torch.load(
-            f"{repo}/checkpoints/video_depth_anything_{encoder}.pth",
-            map_location="cpu",
-        ),
+        torch.load(checkpoint_path, map_location="cpu"),
         strict=True,
     )
     video_depth_anything = video_depth_anything.to(device).eval()
@@ -185,10 +188,18 @@ def depth_anything_video(
                 (original_width, original_height),
                 interpolation=cv2.INTER_NEAREST,
             )
-            # TODO : how to save depth to png
-            __import__("ipdb").set_trace()
-            depth = (1 / depth * 1000).astype(np.uint16)  # convert to mm
-            cv2.imwrite(savename, depth)
+            if metric:
+                depth_mm = np.clip(depth * 1000.0, 0, np.iinfo(np.uint16).max)
+            else:
+                finite = np.isfinite(depth) & (depth > 1e-8)
+                if finite.any():
+                    inv_depth = np.zeros_like(depth, dtype=np.float32)
+                    inv_depth[finite] = 1.0 / depth[finite]
+                    scale = 1000.0 / np.median(inv_depth[finite])
+                    depth_mm = np.clip(inv_depth * scale, 0, np.iinfo(np.uint16).max)
+                else:
+                    depth_mm = np.zeros_like(depth, dtype=np.float32)
+            cv2.imwrite(str(savename), depth_mm.astype(np.uint16))
 
     if vis_output:
         video_name = os.path.basename(input_path)

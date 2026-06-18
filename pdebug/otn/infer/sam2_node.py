@@ -30,6 +30,7 @@ def sam2_main(
     output: str = "tmp_sam2",
     vis_output: str = "tmp_sam2_vis",
     checkpoint: str = "large",
+    device: str = "cpu",
     sam2_checkpoint_path: Optional[str] = None,
     repo: str = None,
     cache: bool = True,
@@ -43,6 +44,7 @@ def sam2_main(
         repo: Path to OnePoseviaGen repository
         output: Output directory for masks
         checkpoint: SAM2 model size (tiny, small, base-plus, large)
+        device: Inference device, e.g. "cpu" or "cuda"
         sam2_checkpoint_path: Custom path to SAM2 checkpoint
     """
 
@@ -58,6 +60,15 @@ def sam2_main(
 
     output.mkdir(parents=True, exist_ok=True)
     vis_output.mkdir(parents=True, exist_ok=True)
+
+    if str(device).startswith("cpu"):
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        try:
+            import torch
+
+            torch.cuda.is_available = lambda: False
+        except Exception:
+            pass
 
     try:
         import sam2
@@ -131,10 +142,10 @@ def sam2_main(
     # Initialize SAM2 predictor
     if sam2_checkpoint_path:
         predictor = build_sam2_video_predictor(
-            str(model_cfg), str(sam2_checkpoint)
+            str(model_cfg), str(sam2_checkpoint), device=device
         )
     else:
-        predictor = build_sam2_video_predictor_hf(model_id)
+        predictor = build_sam2_video_predictor_hf(model_id, device=device)
 
     # Setup inference state
     inference_state = predictor.init_state(video_path=str(input_path))

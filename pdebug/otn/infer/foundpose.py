@@ -3319,7 +3319,11 @@ def cad_to_templates(
                 or object_box.right == render_camera_model_c2w.width - 1
                 or object_box.bottom == render_camera_model_c2w.height - 1
             ):
-                raise ValueError("The model does not fit the viewport.")
+                logger.warning(
+                    "Skipping view %s because the model does not fit the viewport.",
+                    view_id,
+                )
+                continue
 
             # Optionally crop the object region.
             if opts.crop:
