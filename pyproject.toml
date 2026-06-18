@@ -20,9 +20,6 @@ dependencies = [
 [project.scripts]
 runnb = "pdebug.runnb.runnb:main"
 
-[options.packages.find]
-include = "pdebug*"
-
 [project.optional-dependencies]
 runnb = ["toml", "hydra-core", "jupytext"]
 piata = ["scipy", "pycocotools", "json_tricks", "pylance"]
@@ -56,6 +53,9 @@ dev = ["coverage",
         "pep8-naming==0.12.1",
         "mypy==0.910",
         ]
+
+[tool.setuptools]
+packages = ["pdebug"] 
 
 [tool.mypy]
 files = ["sample"]
