@@ -9,8 +9,10 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from pdebug.piata import Input
 
+import io
 import cv2
 import numpy as np
+from PIL import Image
 
 
 class LanceBatch:
@@ -188,6 +190,46 @@ def encode_bitmask(mask: np.ndarray) -> Dict[str, object]:
     }
 
 
+def encode_png_u8(mask: np.ndarray) -> bytes:
+    """Encode a 2D uint8 mask as PNG bytes (single-channel)."""
+    if mask.ndim != 2:
+        raise ValueError("encode_png_u8 expects a 2D mask.")
+    mask_u8 = np.asarray(mask, dtype=np.uint8)
+    if cv2 is not None:
+        ok, buf = cv2.imencode(".png", mask_u8)
+        if not ok:
+            raise ValueError("Failed to encode mask to PNG via OpenCV.")
+        return buf.tobytes()
+    if Image is not None:
+        pil = Image.fromarray(mask_u8, mode="L")
+        out = io.BytesIO()
+        pil.save(out, format="PNG", optimize=True)
+        return out.getvalue()
+    raise RuntimeError("Encoding PNG requires opencv-python or pillow.")
+
+
+def decode_png_u8(data: Union[bytes, bytearray, memoryview]) -> np.ndarray:
+    """Decode PNG bytes into a 2D uint8 mask (single-channel)."""
+    if isinstance(data, memoryview):
+        data = data.tobytes()
+    if isinstance(data, bytearray):
+        data = bytes(data)
+    if not isinstance(data, (bytes,)):
+        raise TypeError(f"decode_png_u8 expects bytes-like, got {type(data)}")
+    if cv2 is not None:
+        arr = np.frombuffer(data, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            raise ValueError("Failed to decode PNG bytes via OpenCV.")
+        if img.ndim == 3:
+            img = img[:, :, 0]
+        return np.asarray(img, dtype=np.uint8)
+    if Image is not None:
+        pil = Image.open(io.BytesIO(data))
+        return np.array(pil.convert("L"), dtype=np.uint8)
+    raise RuntimeError("Decoding PNG requires opencv-python or pillow.")
+
+
 def decode_bitmask(
     payload: Optional[Dict[str, object]]
 ) -> Optional[np.ndarray]:
@@ -257,6 +299,64 @@ def decode_depth_map(
     if arr.size < height * width:
         return None
     depth = arr.reshape((height, width)).astype(np.float32)
+    return depth
+
+
+def encode_depth_map_uint16(depth_map: np.ndarray) -> Dict[str, object]:
+    """Encode a depth map (float32/float64) as uint16 png"""
+    if depth_map.ndim != 2:
+        raise ValueError("encode_depth_map_uint16 expects a 2D depth map.")
+    height, width = depth_map.shape
+    
+    # Ensure we have numeric data; replace NaNs/Infs with zero and clip into range.
+    depth = np.asarray(depth_map, dtype=np.float32)
+    depth = np.nan_to_num(depth, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+    depth = (depth * 1000).astype(np.uint16)        # convert m to mm
+    depth = np.clip(depth, 0, np.iinfo(np.uint16).max).astype(np.uint16, copy=False)
+    
+    # PNG stores uint16 in big-endian order; Pillow expects little-endian, so enforce it.
+    depth = depth.view(dtype="<u2")
+    
+    buffer = io.BytesIO()
+    Image.fromarray(depth, mode="I;16").save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return {
+        "encoding": "uint16_png",
+        "height": int(height),
+        "width": int(width),
+        "data": encoded,
+    }
+
+
+def decode_depth_map_uint16(
+    payload: Optional[Dict[str, object]]
+) -> Optional[np.ndarray]:
+    """Decode a depth map produced by encode_depth_map_uint16."""
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("encoding") != "uint16_png":
+        return None
+    try:
+        height = int(payload["height"])
+        width = int(payload["width"])
+        data = base64.b64decode(payload["data"])
+    except (KeyError, ValueError, TypeError, base64.binascii.Error):
+        return None
+
+    buffer = io.BytesIO(data)
+    try:
+        with Image.open(buffer) as image:
+            if image.mode not in ("I;16", "I;16L", "I;16B"):
+                image = image.convert("I;16")
+            depth_uint16 = np.array(image, dtype=np.uint16, copy=False)
+    except (OSError, ValueError):
+        return None
+
+    if depth_uint16.shape != (height, width):
+        return None
+
+    depth_uint16 = depth_uint16.astype(np.dtype("<u2"), copy=False)
+    depth = depth_uint16.astype(np.float32) / 1000.0
     return depth
 
 

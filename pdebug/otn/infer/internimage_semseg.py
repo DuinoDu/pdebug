@@ -445,7 +445,8 @@ ADE_CLASSES = [
     "flag",
 ]
 
-COLOR_PALETTE = None
+from mmseg.core.evaluation import get_palette
+COLOR_PALETTE = get_palette("ade20k")
 
 
 @otn_manager.NODE.register(name="remove_dynamic")
