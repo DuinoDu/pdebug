@@ -1,4 +1,5 @@
 """Data entry."""
+import importlib
 import json
 import logging
 import os
@@ -10,6 +11,48 @@ import numpy as np
 from .registry import ROIDB_REGISTRY, SOURCE_REGISTRY
 
 __all__ = ["Input"]
+
+_ROIDB_MODULES = {
+    "coco": "pdebug.piata.coco",
+    "simpletxt": "pdebug.piata.handler.simpletxt",
+    "llava_json": "pdebug.piata.handler.llava_json",
+    "cvat_segmentation": "pdebug.piata.handler.cvat",
+    "cvat_keypoints": "pdebug.piata.handler.cvat",
+    "voc": "pdebug.piata.handler.xml_style",
+    "mmpose": "pdebug.piata.handler.experimental",
+    "vott": "pdebug.piata.handler.vott",
+    "labelme": "pdebug.piata.handler.labelme",
+}
+_SOURCE_MODULES = {
+    "imgdir": "pdebug.piata.handler.source",
+    "imgzip": "pdebug.piata.handler.source",
+    "video": "pdebug.piata.handler.source",
+    "simpletxt_reader": "pdebug.piata.handler.source",
+    "parquet": "pdebug.piata.handler.source",
+    "parquet_semseg_v1": "pdebug.piata.handler.source",
+    "spatialmp4": "pdebug.piata.handler.source",
+    "lance_vita": "pdebug.piata.handler.lance_vita",
+    "dddsemseg": "pdebug.piata.handler.dddsemseg",
+    "ddddata_scannet": "pdebug.piata.handler.ddddata",
+    "ddddata_apple_roomplan": "pdebug.piata.handler.ddddata",
+    "ddddata_nyuv2": "pdebug.piata.handler.ddddata",
+    "ddddata_nyuv2_ESANet": "pdebug.piata.handler.ddddata",
+    "ddddata_arkitscenes_raw": "pdebug.piata.handler.ddddata",
+    "ddddata_arkitscenes_3dod": "pdebug.piata.handler.ddddata",
+    "ddddata_sunrgbd": "pdebug.piata.handler.ddddata",
+    "ddddata_2d3dsemantics": "pdebug.piata.handler.ddddata",
+    "ADE20K": "pdebug.piata.handler.ddddata",
+    "S3DIS": "pdebug.piata.handler.ddddata",
+    "ADEChallengeData2016": "pdebug.piata.handler.ddddata",
+}
+
+
+def _ensure_registered(name: str) -> None:
+    if name in ROIDB_REGISTRY or name in SOURCE_REGISTRY:
+        return
+    module_name = _ROIDB_MODULES.get(name) or _SOURCE_MODULES.get(name)
+    if module_name:
+        importlib.import_module(module_name)
 
 
 class Input:
@@ -40,10 +83,7 @@ class Input:
             kwargs["name"] = "default"
             print("use `default` roidb handle.")
 
-        if kwargs["name"] == "coco":
-            import pdebug.piata.coco
-        elif kwargs["name"] == "lance_vita":
-            import pdebug.piata.handler.lance_vita
+        _ensure_registered(kwargs["name"])
 
         if kwargs["name"] in ROIDB_REGISTRY:
             roidb_func = ROIDB_REGISTRY.get(kwargs.pop("name"))

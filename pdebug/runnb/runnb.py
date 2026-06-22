@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from typing import Optional
 
 import typer
@@ -84,7 +85,7 @@ if __name__ == '__main__':
     main_python_file = os.path.join(cache, f"runnb_{func}.py")
     with open(main_python_file, "w") as fid:
         fid.write(main_str)
-    subprocess.run(["python3", f"{main_python_file}"])
+    subprocess.run([sys.executable, f"{main_python_file}"], check=True)
 
 
 def run_all(func, cache, ctx, notebook_name):
@@ -98,18 +99,14 @@ from {notebook_name} import *
     main_python_file = os.path.join(cache, "runnb_all.py")
     with open(main_python_file, "w") as fid:
         fid.write(main_str)
-    subprocess.run(["python3", f"{main_python_file}"] + ctx.args)
+    subprocess.run(
+        [sys.executable, f"{main_python_file}"] + ctx.args, check=True
+    )
 
 
 def run_test(notebook, cache, ctx, notebook_name):
     """Run test in notebook."""
     test_code_list = []
-    try:
-        import astunparse
-    except ImportError as e:
-        print("pip install astunparse to run test in notebook.")
-        return
-
     nb = Notebook(notebook)
     for cell in nb.cells:
         if cell.get("cell_type", None) != "code":
@@ -130,10 +127,10 @@ def run_test(notebook, cache, ctx, notebook_name):
             else:
                 nb_body.append(obj)
         f_ast.body = test_body
-        test_code_list.append(astunparse.unparse(f_ast))
+        test_code_list.append(ast.unparse(f_ast))
 
         f_ast.body = nb_body
-        new_source = astunparse.unparse(f_ast).split("\n")
+        new_source = ast.unparse(f_ast).split("\n")
         cell["source"] = new_source
 
     nb.dump(notebook)
@@ -144,13 +141,16 @@ def run_test(notebook, cache, ctx, notebook_name):
 from {notebook_name} import *
 """
     for code in test_code_list:
-        test_str += code
+        test_str += code + "\n\n"
 
     test_python_file = os.path.join(cache, "runnb_test.py")
     with open(test_python_file, "w") as fid:
         fid.write(test_str)
 
-    subprocess.run(["pytest", f"{test_python_file}"] + ctx.args)
+    subprocess.run(
+        [sys.executable, "-m", "pytest", f"{test_python_file}"] + ctx.args,
+        check=True,
+    )
 
 
 def run_install(notebook, ctx):
@@ -200,9 +200,9 @@ def run_install(notebook, ctx):
             continue
         spec = importlib.util.find_spec(name)
         if spec is None:
-            cmd = f"pip3 install {name} {' '.join(ctx.args)}".strip()
-            print(cmd)
-            subprocess.run(cmd.split(" "))
+            cmd = [sys.executable, "-m", "pip", "install", name] + ctx.args
+            print(" ".join(cmd))
+            subprocess.run(cmd, check=True)
 
 
 def run_submit(notebook, cache, ctx, notebook_name):
@@ -221,7 +221,7 @@ main(config)
     python_file = os.path.join(cache, "runnb_submit.py")
     with open(python_file, "w") as fid:
         fid.write(test_str)
-    subprocess.run(["python3", f"{python_file}"])
+    subprocess.run([sys.executable, f"{python_file}"], check=True)
 
 
 @app.command(
@@ -255,8 +255,19 @@ def runnb(
     if notebook.endswith(".ipynb"):
         remove_skip_in_notebook(notebook_copied)
         lib_python_file = os.path.join(cache, f"{notebook_name}.py")
-        cmd = f"jupytext {notebook_copied} --to py --output {lib_python_file}"
-        subprocess.run(cmd.split(" "))
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "jupytext",
+                notebook_copied,
+                "--to",
+                "py",
+                "--output",
+                lib_python_file,
+            ],
+            check=True,
+        )
         assert action not in ["submit"], "NotImplemetedError"
     elif notebook.endswith(".py"):
         assert action not in ["runtest", "all"], "NotImplemetedError"

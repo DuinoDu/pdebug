@@ -88,11 +88,11 @@ def _infer_copy_mode(data: Any) -> str:
     # pylint: disable=import-outside-toplevel
     try:
         import pandas as pd
-    except ImportError:  # pragma: no cover
+    except Exception:  # pragma: no cover
         pd = None  # pragma: no cover
     try:
         import numpy as np
-    except ImportError:  # pragma: no cover
+    except Exception:  # pragma: no cover
         np = None  # pragma: no cover
 
     if (

@@ -65,56 +65,56 @@ try:
     import torch
 
     TORCH_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     TORCH_INSTALLED = False
 
 try:
     import torchvision
 
     TORCHVISION_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     TORCHVISION_INSTALLED = False
 
 try:
     import torchmetrics
 
     TORCHMETRICS_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     TORCHMETRICS_INSTALLED = False
 
 try:
     import timm
 
     TIMM_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     TIMM_INSTALLED = False
 
 try:
     import jittor
 
     JITTOR_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     JITTOR_INSTALLED = False
 
 try:
     import visdom
 
     VISDOM_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     VISDOM_INSTALLED = False
 
 try:
     import open3d
 
     OPEN3D_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     OPEN3D_INSTALLED = False
 
 try:
     import plotly
 
     PLOTLY_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     PLOTLY_INSTALLED = False
 
 try:
@@ -124,14 +124,14 @@ try:
     install(max_frames=0)
 
     RICH_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     RICH_INSTALLED = False
 
 try:
     import scipy
 
     SCIPY_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     SCIPY_INSTALLED = False
 
 
@@ -141,14 +141,14 @@ try:
     PYNVML_INSTALLED = True
     if os.environ.get("DISABLE_PYNVML", "0") == "1" or IS_MAC:
         PYNVML_INSTALLED = False
-except ModuleNotFoundError:
+except Exception:
     PYNVML_INSTALLED = False
 
 try:
     import xmltodict
 
     XMLTODICT_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     XMLTODICT_INSTALLED = False
 
 
@@ -176,7 +176,7 @@ try:
     import cruise
 
     CRUISE_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     CRUISE_INSTALLED = False
 
 
@@ -184,7 +184,7 @@ try:
     import pyarrow
 
     PYARROW_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     PYARROW_INSTALLED = False
 
 
@@ -192,7 +192,7 @@ try:
     import imantics
 
     IMANTICS_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     IMANTICS_INSTALLED = False
 
 
@@ -200,42 +200,42 @@ try:
     import ffmpeg
 
     FFMPEG_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     FFMPEG_INSTALLED = False
 
 try:
     import pandas
 
     PANDAS_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     PANDAS_INSTALLED = False
 
 try:
     import mmseg
 
     MMSEG_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     MMSEG_INSTALLED = False
 
 try:
     import pytorch3d
 
     PYTORCH3D_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     PYTORCH3D_INSTALLED = False
 
 try:
     import trimesh
 
     TRIMESH_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     TRIMESH_INSTALLED = False
 
 try:
     import pyrender
 
     PYRENDER_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     PYRENDER_INSTALLED = False
 
 
@@ -243,7 +243,7 @@ try:
     import rerun
 
     RERUN_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     RERUN_INSTALLED = False
 
 if RERUN_INSTALLED:
@@ -259,77 +259,77 @@ try:
     import plotext
 
     PLOTEXT_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     PLOTEXT_INSTALLED = False
 
 try:
     import dora
 
     DORA_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     DORA_INSTALLED = False
 
 try:
     import bpy
 
     BLENDER_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     BLENDER_INSTALLED = False
 
 try:
     import vispy
 
     VISPY_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     VISPY_INSTALLED = False
 
 try:
     import yourdfpy
 
     YOURDFPY_INSTALLED = True
-except ModuleNotFoundError:
+except Exception:
     YOURDFPY_INSTALLED = False
 
 try:
     import spatialmp4
 
     SPATIALMP4_INSTALLED = True
-except ModuleNotFoundError as e:
+except Exception:
     SPATIALMP4_INSTALLED = False
 
 try:
     import vggt
 
     VGGT_INSTALLED = True
-except ModuleNotFoundError as e:
+except Exception:
     VGGT_INSTALLED = False
 
 try:
     import viser
 
     VISER_INSTALLED = True
-except ModuleNotFoundError as e:
+except Exception:
     VISER_INSTALLED = False
 
 try:
     import securemr
 
     SECUREMR_INSTALLED = True
-except ModuleNotFoundError as e:
+except Exception:
     SECUREMR_INSTALLED = False
 
 try:
     import huggingface_hub
 
     HUGGINGFACE_HUB_INSTALLED = True
-except ModuleNotFoundError as e:
+except Exception:
     HUGGINGFACE_HUB_INSTALLED = False
 
 try:
     import transformers
 
     TRANSFORMERS_INSTALLED = True
-except ModuleNotFoundError as e:
+except Exception:
     TRANSFORMERS_INSTALLED = False
 
 
@@ -337,5 +337,5 @@ try:
     import moviepy
 
     MOVIEPY_INSTALLED = True
-except ModuleNotFoundError as e:
+except Exception:
     MOVIEPY_INSTALLED = False

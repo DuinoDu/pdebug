@@ -2,13 +2,18 @@ import importlib.util
 import inspect
 import os
 from collections import defaultdict
-from typing import Any, Tuple, Union
+from typing import Any, List, Tuple, Union
 
 import typer
 from fvcore.common.registry import Registry as _Registry
-from tabulate import tabulate
 
-__all__ = ["check_optional", "is_cli_mode", "reset_cli_mode", "create"]
+__all__ = [
+    "check_optional",
+    "is_cli_mode",
+    "reset_cli_mode",
+    "load_extension_nodes",
+    "create",
+]
 
 
 _CLI_MODE = False
@@ -48,6 +53,7 @@ class OTNRegistry(_Registry):
     @classmethod
     def find_node_from_folder(cls, node_dir, skip=(), strict=True):
         # load from otn folder or cache
+        errors = []
         node_files = []
         for path, dirs, files in os.walk(node_dir, followlinks=True):
 
@@ -80,6 +86,8 @@ class OTNRegistry(_Registry):
             except Exception as e:
                 if strict:
                     raise e
+                errors.append((f, e))
+        return errors
 
     def register(self, name: str = None, obj: object = None):
         """
@@ -119,34 +127,86 @@ class OTNRegistry(_Registry):
                 except Exception as e:
                     print(f"{n} has no docstring.")
                     raise e
-            table = tabulate(
-                obj_map.items(),
-                headers=["Names", "Description"],
-                tablefmt="fancy_grid",
-            )
+            try:
+                from tabulate import tabulate
+
+                table = tabulate(
+                    obj_map.items(),
+                    headers=["Names", "Description"],
+                    tablefmt="fancy_grid",
+                )
+            except ImportError:
+                table = "\n".join(
+                    f"{node_name}: {description}"
+                    for node_name, description in obj_map.items()
+                )
             all_strs += f"{g} nodes:\n" + table + "\n"
         return all_strs
 
 
 NODE = OTNRegistry("NODE")
-NODE.find_node_from_folder(
-    os.path.dirname(__file__), skip=("analysis", "data", "infer", "train")
+
+_CORE_MODULES = (
+    "pdebug.otn.dag",
+    "pdebug.otn.run_shell",
+    "pdebug.otn.single_node",
 )
-NODE.find_node_from_folder(os.path.join(os.path.dirname(__file__), "analysis"))
-NODE.find_node_from_folder(os.path.join(os.path.dirname(__file__), "data"))
-NODE.find_node_from_folder(os.path.join(os.path.dirname(__file__), "infer"))
-NODE.find_node_from_folder(
-    os.path.join(os.path.dirname(__file__), "train"), strict=False
+_EXTENSION_DIRS = (
+    "analysis",
+    "data",
+    "infer",
+    "train",
+    "../debug",
 )
-NODE.find_node_from_folder(
-    os.path.join(os.path.dirname(__file__), "../debug"), strict=False
-)
+_EXTENSIONS_LOADED = False
+_EXTENSION_LOAD_ERRORS: List[Tuple[str, Exception]] = []
+
+
+def _load_core_nodes() -> None:
+    """Register lightweight built-in nodes required by OTN itself."""
+    for module_name in _CORE_MODULES:
+        importlib.import_module(module_name)
+
+
+def load_extension_nodes(strict: bool = False) -> None:
+    """Discover optional OTN nodes on demand.
+
+    Most nodes live in modules with heavy optional dependencies. Loading them
+    during ``import pdebug.otn`` makes unrelated imports fail when one optional
+    dependency is broken, so extension discovery is delayed until a requested
+    node is missing from the core registry.
+    """
+    global _EXTENSIONS_LOADED, _EXTENSION_LOAD_ERRORS
+    if _EXTENSIONS_LOADED and not strict:
+        return
+
+    errors = []
+    base_dir = os.path.dirname(__file__)
+    for node_dir in _EXTENSION_DIRS:
+        errors.extend(
+            NODE.find_node_from_folder(
+                os.path.join(base_dir, node_dir), strict=strict
+            )
+        )
+    _EXTENSION_LOAD_ERRORS = errors
+    if not strict:
+        _EXTENSIONS_LOADED = True
+
+
+_load_core_nodes()
 
 
 def create(name: str) -> Any:
     """Create node from OTN."""
+    if name not in NODE:
+        load_extension_nodes(strict=False)
     if name in NODE:
-        obj = NODE.get(name)
-    else:
-        raise ValueError(f"Unknown node name: {name}.\nAvailable: {NODE}")
-    return obj
+        return NODE.get(name)
+    message = f"Unknown node name: {name}.\nAvailable: {NODE}"
+    if _EXTENSION_LOAD_ERRORS:
+        skipped = "\n".join(
+            f"- {path}: {type(error).__name__}: {error}"
+            for path, error in _EXTENSION_LOAD_ERRORS
+        )
+        message += f"\nSkipped extension modules:\n{skipped}"
+    raise ValueError(message)

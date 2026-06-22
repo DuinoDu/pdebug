@@ -1,7 +1,19 @@
 # Makefile used to execute some commands locally
 
+PYTHON := $(shell \
+	if [ -x .venv/bin/python ]; then \
+		echo .venv/bin/python; \
+	else \
+		echo python; \
+	fi \
+)
+PYTEST := $(PYTHON) -m pytest
+TEST_DIRS := ./pdebug/tests ./pdebug/visp/tests ./pdebug/pdag/tests \
+	./pdebug/runnb/tests ./pdebug/piata/tests ./pdebug/otn/tests \
+	./pdebug/utils/tests
+
 env:
-	pip3 install -e ".[all]"
+	$(PYTHON) -m pip install -e ".[all,dev]"
 	# pre-commit install
 
 lint:
@@ -11,17 +23,17 @@ watch-lint:
 	ptw --runner "pre-commit run -a"
 
 test:
-	pytest -s ./pdebug/tests
-	pytest -s ./pdebug/visp/tests
-	pytest -s ./pdebug/pdag/tests
-	pytest -s ./pdebug/runnb/tests
-	pytest -s ./pdebug/piata/tests
-	pytest -s ./pdebug/otn/tests
-	pytest -s ./pdebug/utils/tests
-	pytest -s ./pdebug/debug/tests
+	$(PYTEST) -s ./pdebug/tests
+	$(PYTEST) -s ./pdebug/visp/tests
+	$(PYTEST) -s ./pdebug/pdag/tests
+	$(PYTEST) -s ./pdebug/runnb/tests
+	$(PYTEST) -s ./pdebug/piata/tests
+	$(PYTEST) -s ./pdebug/otn/tests
+	$(PYTEST) -s ./pdebug/utils/tests
+	$(PYTEST) -s ./pdebug/debug/tests || [ $$? -eq 5 ]
 
 watch-test:
-	ptw --runner "pytest tests -s pdebug/tests"
+	ptw --runner "$(PYTEST) -s $(TEST_DIRS)"
 
 isort:
 	isort .
@@ -36,11 +48,11 @@ pydocstyle:
 	pydocstyle --match-dir='(?!test|project).*'
 
 wheel:
-	python3 setup.py sdist bdist_wheel; \
+	$(PYTHON) -m pip wheel . --no-deps -w dist; \
 	ls dist
 
 upload:
-	python setup.py bdist_wheel upload -r hobot-local
+	$(PYTHON) -m twine upload dist/*
 
 clean-wheel:
 	@rm -rf dist

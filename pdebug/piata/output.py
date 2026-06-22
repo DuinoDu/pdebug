@@ -1,9 +1,24 @@
 """Data output"""
+import importlib
 import os
 
 from .registry import OUTPUT_REGISTRY
 
 __all__ = ["Output"]
+
+_OUTPUT_MODULES = {
+    "imgdir": "pdebug.piata.handler.destination",
+    "video": "pdebug.piata.handler.destination",
+    "video_ffmpeg": "pdebug.piata.handler.destination",
+}
+
+
+def _ensure_registered(name: str) -> None:
+    if name in OUTPUT_REGISTRY:
+        return
+    module_name = _OUTPUT_MODULES.get(name)
+    if module_name:
+        importlib.import_module(module_name)
 
 
 class Output:
@@ -25,11 +40,13 @@ class Output:
     def __init__(self, *args, **kwargs):
         if "name" not in kwargs:
             raise ValueError("`name` is requred in Output.")
-        if kwargs["name"] in OUTPUT_REGISTRY:
+        self._name = kwargs["name"]
+        _ensure_registered(self._name)
+        if self._name in OUTPUT_REGISTRY:
             output_func = OUTPUT_REGISTRY.get(kwargs.pop("name"))
             self._output = output_func(*args, **kwargs)
         else:
-            raise ValueError(f"Unknown output type: {kwargs['name']}")
+            raise ValueError(f"Unknown output type: {self._name}")
 
     def __str__(self):
         return "piata output"
@@ -44,7 +61,9 @@ class Output:
         if hasattr(self._output, "save"):
             self._output.save(output_name)
         else:
-            raise RuntimeError(f"{name} Output don't have `save` interface.")
+            raise RuntimeError(
+                f"{self._name} Output don't have `save` interface."
+            )
 
 
 @OUTPUT_REGISTRY.register(name="coco")
