@@ -10,7 +10,7 @@ PYTHON := $(shell \
 PYTEST := $(PYTHON) -m pytest
 TEST_DIRS := ./pdebug/tests ./pdebug/visp/tests ./pdebug/pdag/tests \
 	./pdebug/runnb/tests ./pdebug/piata/tests ./pdebug/otn/tests \
-	./pdebug/utils/tests
+	./pdebug/algo/tests ./pdebug/geometry/tests ./pdebug/utils/tests
 
 env:
 	$(PYTHON) -m pip install -e ".[all,dev]"
@@ -29,6 +29,8 @@ test:
 	$(PYTEST) -s ./pdebug/runnb/tests
 	$(PYTEST) -s ./pdebug/piata/tests
 	$(PYTEST) -s ./pdebug/otn/tests
+	$(PYTEST) -s ./pdebug/algo/tests
+	$(PYTEST) -s ./pdebug/geometry/tests
 	$(PYTEST) -s ./pdebug/utils/tests
 	$(PYTEST) -s ./pdebug/debug/tests || [ $$? -eq 5 ]
 

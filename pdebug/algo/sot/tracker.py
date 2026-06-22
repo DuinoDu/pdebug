@@ -116,7 +116,7 @@ class PointTracker(BaseTracker):
         assert points.ndim == 2
         points = points[:, :2]
         boxes = points_to_boxes(points, self._point_size, layout="x1y1wh")
-        self._boxes = boxes.astype(np.int)
+        self._boxes = boxes.astype(int)
 
     def update(self, frame: np.ndarray) -> Tuple[List[bool], List[np.ndarray]]:
         rets, boxes = super(PointTracker, self).update(frame)
@@ -136,4 +136,4 @@ class BBoxTracker(BaseTracker):
             boxes = boxes[None, :]
         assert boxes.ndim == 2
         boxes = boxes[:, :4]
-        self._boxes = boxes.astype(np.int)
+        self._boxes = boxes.astype(int)
