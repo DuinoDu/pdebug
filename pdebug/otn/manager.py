@@ -111,11 +111,13 @@ class OTNRegistry(_Registry):
     def __repr__(self) -> str:
         groups = defaultdict(list)
         for k, v in self._obj_map.items():
-            filepath = inspect.getsourcefile(v)
+            filepath = getattr(v, "manifest_path", None)
+            if filepath is None:
+                filepath = inspect.getsourcefile(v)
             if v.__doc__ is None:
                 print(f"{filepath} has not docstring")
             else:
-                dirname = os.path.basename(os.path.dirname(filepath))
+                dirname = os.path.basename(os.path.dirname(str(filepath)))
                 groups[dirname].append(k)
 
         all_strs = ""
@@ -160,12 +162,35 @@ _EXTENSION_DIRS = (
 )
 _EXTENSIONS_LOADED = False
 _EXTENSION_LOAD_ERRORS: List[Tuple[str, Exception]] = []
+_MANIFEST_LOAD_ERRORS: List[Tuple[str, Exception]] = []
 
 
 def _load_core_nodes() -> None:
     """Register lightweight built-in nodes required by OTN itself."""
     for module_name in _CORE_MODULES:
         importlib.import_module(module_name)
+
+
+def load_manifest_nodes(strict: bool = False) -> None:
+    """Register manifest-backed nodes without importing heavy modules."""
+    global _MANIFEST_LOAD_ERRORS
+
+    base_dir = os.path.dirname(__file__)
+    manifest_dirs = [
+        os.path.join(base_dir, node_dir) for node_dir in _EXTENSION_DIRS
+    ]
+    try:
+        from pdebug.otn.inference import register_manifest_nodes
+
+        _MANIFEST_LOAD_ERRORS = register_manifest_nodes(
+            NODE,
+            manifest_dirs,
+            strict=strict,
+        )
+    except Exception as e:
+        if strict:
+            raise e
+        _MANIFEST_LOAD_ERRORS = [("manifest discovery", e)]
 
 
 def load_extension_nodes(strict: bool = False) -> None:
@@ -176,12 +201,13 @@ def load_extension_nodes(strict: bool = False) -> None:
     dependency is broken, so extension discovery is delayed until a requested
     node is missing from the core registry.
     """
-    global _EXTENSIONS_LOADED, _EXTENSION_LOAD_ERRORS
+    global _EXTENSIONS_LOADED, _EXTENSION_LOAD_ERRORS, _MANIFEST_LOAD_ERRORS
     if _EXTENSIONS_LOADED and not strict:
         return
 
     errors = []
     base_dir = os.path.dirname(__file__)
+    load_manifest_nodes(strict=strict)
     for node_dir in _EXTENSION_DIRS:
         errors.extend(
             NODE.find_node_from_folder(
@@ -199,6 +225,10 @@ _load_core_nodes()
 def create(name: str) -> Any:
     """Create node from OTN."""
     if name not in NODE:
+        load_manifest_nodes(strict=False)
+    if name in NODE:
+        return NODE.get(name)
+    if not _EXTENSIONS_LOADED:
         load_extension_nodes(strict=False)
     if name in NODE:
         return NODE.get(name)
@@ -209,4 +239,10 @@ def create(name: str) -> Any:
             for path, error in _EXTENSION_LOAD_ERRORS
         )
         message += f"\nSkipped extension modules:\n{skipped}"
+    if _MANIFEST_LOAD_ERRORS:
+        skipped = "\n".join(
+            f"- {path}: {type(error).__name__}: {error}"
+            for path, error in _MANIFEST_LOAD_ERRORS
+        )
+        message += f"\nSkipped manifest files:\n{skipped}"
     raise ValueError(message)

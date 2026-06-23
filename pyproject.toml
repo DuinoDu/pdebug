@@ -65,6 +65,9 @@ dev = ["coverage",
 where = ["."]
 include = ["pdebug*"]
 
+[tool.setuptools.package-data]
+pdebug = ["otn/infer/manifests/*.otn.json"]
+
 [tool.mypy]
 files = ["sample"]
 disallow_untyped_defs = "True"

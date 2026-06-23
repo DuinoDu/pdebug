@@ -23,15 +23,15 @@ from pdebug.otn.infer import internimage_semseg as semseg_module
 from pdebug.otn.infer import ml_depth_pro_node as ml_depth_pro_module
 from pdebug.otn.infer import moondream_node as moondream_module
 from pdebug.otn.infer import qwen2_5_vl
-from pdebug.otn.infer.lance_utils import (
-    LanceBatch,
+from pdebug.piata import (
+    ImageBatch,
     compute_image_stats,
     decode_bitmask,
-    decode_png_u8,
-    encode_png_u8,
     decode_depth_map,
-    encode_depth_map_uint16,
     decode_depth_map_uint16,
+    decode_png_u8,
+    encode_depth_map_uint16,
+    encode_png_u8,
     load_lance_batch,
 )
 from pdebug.utils.cache import ResultCache
@@ -113,7 +113,9 @@ def _ensure_bytes(value: object) -> bytes:
 
 def _decode_lance_image(buffer: bytes, *, to_rgb: bool = True) -> np.ndarray:
     if buffer is None:
-        raise ValueError("Encountered empty image buffer when decoding Lance data.")
+        raise ValueError(
+            "Encountered empty image buffer when decoding Lance data."
+        )
     if Image is not None:
         with Image.open(io.BytesIO(buffer)) as handle:
             frame = np.asarray(handle.convert("RGB"))
@@ -122,7 +124,9 @@ def _decode_lance_image(buffer: bytes, *, to_rgb: bool = True) -> np.ndarray:
             raise RuntimeError(
                 "Decoding Lance images requires pillow or opencv-python to be installed."
             )
-        frame = cv2.imdecode(np.frombuffer(buffer, dtype=np.uint8), cv2.IMREAD_COLOR)
+        frame = cv2.imdecode(
+            np.frombuffer(buffer, dtype=np.uint8), cv2.IMREAD_COLOR
+        )
         if frame is None:
             raise ValueError("Failed to decode image buffer via OpenCV.")
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -171,12 +175,12 @@ def _table_to_lance_batch(
     frame_num_col: Optional[str],
     index_offset: int,
     trigger: Optional[str] = None,
-) -> LanceBatch:
+) -> ImageBatch:
     images: List[np.ndarray] = []
     metadata: List[Dict[str, object]] = []
 
     if trigger:
-        table = table.filter(pc.equal(table['trigger'], pa.scalar(trigger)))
+        table = table.filter(pc.equal(table["trigger"], pa.scalar(trigger)))
         print(f"Filtered table to {len(table)} rows with trigger: {trigger}")
 
     for row_idx in range(len(table)):
@@ -188,7 +192,9 @@ def _table_to_lance_batch(
             entry[name] = value
 
         if image_col not in entry:
-            raise KeyError(f"Column '{image_col}' missing from Lance batch slice.")
+            raise KeyError(
+                f"Column '{image_col}' missing from Lance batch slice."
+            )
 
         buffer = _ensure_bytes(entry.pop(image_col))
         image = _decode_lance_image(buffer)
@@ -209,11 +215,15 @@ def _table_to_lance_batch(
 
         source_video = entry.get(video_id_col) if video_id_col else None
         if source_video is None:
-            source_video = entry.get("source_video_id_resolved") or "lance_vita"
+            source_video = (
+                entry.get("source_video_id_resolved") or "lance_vita"
+            )
         entry["source_video_id_resolved"] = str(source_video)
 
-        timestamp_raw = entry.get(timestamp_col) if timestamp_col else entry.get(
-            "timestamp_raw"
+        timestamp_raw = (
+            entry.get(timestamp_col)
+            if timestamp_col
+            else entry.get("timestamp_raw")
         )
         entry["timestamp_raw"] = timestamp_raw
         entry["timestamp_seconds"] = _timestamp_to_seconds(
@@ -223,7 +233,12 @@ def _table_to_lance_batch(
         metadata.append(entry)
         images.append(image)
 
-    return LanceBatch(table=table, images=images, metadata=metadata)
+    return ImageBatch(
+        table=table,
+        images=images,
+        metadata=metadata,
+        source_type="lance",
+    )
 
 
 def _iter_lance_batches(
@@ -236,7 +251,7 @@ def _iter_lance_batches(
     video_id_col: Optional[str],
     frame_num_col: Optional[str],
     trigger: Optional[str] = None,
-) -> Iterator[LanceBatch]:
+) -> Iterator[ImageBatch]:
     import lance
 
     scanner_kwargs: Dict[str, object] = {}
@@ -282,25 +297,35 @@ def _iter_lance_batches(
             break
 
 
-def _slice_lance_batch(batch: LanceBatch, start: int) -> LanceBatch:
+def _slice_lance_batch(batch: ImageBatch, start: int) -> ImageBatch:
     if start <= 0:
         return batch
     total = len(batch.images)
     if start >= total:
         empty_table = batch.table.slice(total, 0)
-        return LanceBatch(table=empty_table, images=[], metadata=[])
+        return ImageBatch(
+            table=empty_table,
+            images=[],
+            metadata=[],
+            source_type="lance",
+        )
     images = list(batch.images[start:])
     metadata = list(batch.metadata[start:])
     table = batch.table.slice(start, len(images))
-    return LanceBatch(table=table, images=images, metadata=metadata)
+    return ImageBatch(
+        table=table,
+        images=images,
+        metadata=metadata,
+        source_type="lance",
+    )
 
 
 def _resume_batches(
-    batches: Iterator[LanceBatch],
+    batches: Iterator[ImageBatch],
     *,
     resume_count: int,
     stage: str,
-) -> Iterator[LanceBatch]:
+) -> Iterator[ImageBatch]:
     if resume_count <= 0:
         yield from batches
         return
@@ -384,11 +409,13 @@ def _preview_rows(table: pa.Table, limit: int = 3) -> None:
         ):
             mask_value = summary["cortexia_segmentation"]["mask"]
             if isinstance(mask_value, (bytes, bytearray, memoryview)):
-                summary["cortexia_segmentation"]["mask"] = (
-                    f"<png_bytes len={len(mask_value)}>"
-                )
+                summary["cortexia_segmentation"][
+                    "mask"
+                ] = f"<png_bytes len={len(mask_value)}>"
             else:
-                summary["cortexia_segmentation"]["mask"] = str(mask_value)[-100:]
+                summary["cortexia_segmentation"]["mask"] = str(mask_value)[
+                    -100:
+                ]
         if "cortexia_depth" in summary and "map" in summary["cortexia_depth"]:
             summary["cortexia_depth"]["map"] = str(
                 summary["cortexia_depth"]["map"]
@@ -512,7 +539,9 @@ def _run_segmentation(
             continue
 
         if model_bundle is None:
-            raise RuntimeError("Failed to load InternImage segmentation model.")
+            raise RuntimeError(
+                "Failed to load InternImage segmentation model."
+            )
         model, infer_func, _ = model_bundle
         result = infer_func(model, image)[0]
         mask = np.asarray(result, dtype=np.uint8)
@@ -623,13 +652,17 @@ def _render_segmentation(
     from pdebug.visp import draw as vis_draw
 
     if not isinstance(payload, dict) or not payload:
-        return _append_text_panel(image, "[Segmentation]", ["No segmentation."])
+        return _append_text_panel(
+            image, "[Segmentation]", ["No segmentation."]
+        )
 
     mask_value = payload.get("mask")
     encoding = payload.get("encoding", "")
     mask: Optional[np.ndarray] = None
 
-    if encoding == "png_u8" or isinstance(mask_value, (bytes, bytearray, memoryview)):
+    if encoding == "png_u8" or isinstance(
+        mask_value, (bytes, bytearray, memoryview)
+    ):
         if isinstance(mask_value, (bytes, bytearray, memoryview)):
             mask = decode_png_u8(mask_value)
     elif encoding == "bitmask":
@@ -642,7 +675,9 @@ def _render_segmentation(
                 mask = mask.reshape(shape)
 
     if mask is None or mask.size == 0:
-        return _append_text_panel(image, "[Segmentation]", ["No segmentation."])
+        return _append_text_panel(
+            image, "[Segmentation]", ["No segmentation."]
+        )
 
     rendered = vis_draw.semseg(
         mask,
@@ -712,7 +747,9 @@ def _render_depth(
     )
 
 
-def _combine_visualizations(images: Sequence[np.ndarray], rows=3, cols=2) -> np.ndarray:
+def _combine_visualizations(
+    images: Sequence[np.ndarray], rows=3, cols=2
+) -> np.ndarray:
     if not images:
         raise ValueError("No visualization images provided.")
     cell_height = max(img.shape[0] for img in images)
@@ -942,7 +979,9 @@ def main(
 
     if tasks:
         normalized_tasks = [task.lower() for task in tasks]
-        invalid = [task for task in normalized_tasks if task not in available_stages]
+        invalid = [
+            task for task in normalized_tasks if task not in available_stages
+        ]
         if invalid:
             raise typer.BadParameter(
                 f"Unsupported task(s) requested: {invalid}. "
@@ -992,9 +1031,7 @@ def main(
     if row_limit is not None:
         total_rows = min(int(row_limit), total_rows)
     if total_rows <= 0:
-        raise RuntimeError(
-            f"No images found in Lance dataset {dataset_path}"
-        )
+        raise RuntimeError(f"No images found in Lance dataset {dataset_path}")
     del ds
 
     effective_batch_size = (
@@ -1007,7 +1044,8 @@ def main(
     logger.info(
         f"Processing {total_rows} rows in batches of {effective_batch_size}."
     )
-    def iter_batches() -> Iterator[LanceBatch]:
+
+    def iter_batches() -> Iterator[ImageBatch]:
         return _iter_lance_batches(
             dataset_path,
             image_col=image_col,
@@ -1024,9 +1062,7 @@ def main(
     cache_root: Optional[Path] = None
     if resume:
         resume_root = (
-            output_dataset.parent
-            / ".use_with_lance_cache"
-            / dataset_path.name
+            output_dataset.parent / ".use_with_lance_cache" / dataset_path.name
         )
         if row_limit is not None:
             resume_root = resume_root / f"rows_{int(row_limit)}"
@@ -1080,7 +1116,9 @@ def main(
         if "caption" in stages_to_run:
             logger.info(f"Running Moondream caption inference ...")
             caption_before = gpu_memory_tic()
-            caption_resume = min(caption_cache.count, total_rows) if resume else 0
+            caption_resume = (
+                min(caption_cache.count, total_rows) if resume else 0
+            )
             if resume and caption_cache.count > total_rows:
                 logger.warning(
                     "Caption cache contains %d rows but dataset has %d; "
@@ -1126,7 +1164,9 @@ def main(
             logger.info(f"Running Qwen2.5-VL listing inference ...")
             prompt = qwen_prompt or qwen2_5_vl.DEFAULT_TEXT
             listing_before = gpu_memory_tic()
-            listing_resume = min(listing_cache.count, total_rows) if resume else 0
+            listing_resume = (
+                min(listing_cache.count, total_rows) if resume else 0
+            )
             if resume and listing_cache.count > total_rows:
                 logger.warning(
                     "Listing cache contains %d rows but dataset has %d; "
@@ -1149,7 +1189,9 @@ def main(
                     gc.collect()
                     continue
                 listing_cache.append_many(
-                    _run_listing(batch.images, unittest=unittest, prompt=prompt)
+                    _run_listing(
+                        batch.images, unittest=unittest, prompt=prompt
+                    )
                 )
                 processed += len(batch.images)
                 del batch
@@ -1169,7 +1211,10 @@ def main(
 
         # Stage 3: Detection (depends on listing results)
         if "detection" in stages_to_run:
-            if "listing" not in stages_to_run and listing_cache.count < total_rows:
+            if (
+                "listing" not in stages_to_run
+                and listing_cache.count < total_rows
+            ):
                 raise RuntimeError(
                     "Detection stage requires listing results; rerun with the "
                     "listing task or ensure listing cache is complete."
@@ -1179,7 +1224,9 @@ def main(
             )
             detection_before = gpu_memory_tic()
             listing_iter_for_detection = listing_cache.iter_results()
-            detection_resume = min(detection_cache.count, total_rows) if resume else 0
+            detection_resume = (
+                min(detection_cache.count, total_rows) if resume else 0
+            )
             if resume and detection_cache.count > total_rows:
                 logger.warning(
                     "Detection cache contains %d rows but dataset has %d; "
@@ -1221,7 +1268,9 @@ def main(
                         "Detection stage could not align listing results with images."
                     )
                 detection_cache.append_many(
-                    _run_detection(batch.images, listing_slice, unittest=unittest)
+                    _run_detection(
+                        batch.images, listing_slice, unittest=unittest
+                    )
                 )
                 processed += span
                 del batch
@@ -1234,7 +1283,11 @@ def main(
             gpu_memory_toc(
                 "GroundingDINO detection",
                 detection_before,
-                (getattr(groundingdino_module, "_load_groundingdino_model", None),),
+                (
+                    getattr(
+                        groundingdino_module, "_load_groundingdino_model", None
+                    ),
+                ),
             )
         else:
             logger.info("Skipping detection stage (not requested).")
@@ -1260,7 +1313,9 @@ def main(
                 )
             processed = segmentation_resume
             for batch in _resume_batches(
-                iter_batches(), resume_count=segmentation_resume, stage="Internimage"
+                iter_batches(),
+                resume_count=segmentation_resume,
+                stage="Internimage",
             ):
                 logger.info(f"[Internimage] {processed} / {total_rows}")
                 if not batch.images:
@@ -1336,17 +1391,29 @@ def main(
         writer = LanceDatasetWriter(output_dataset)
         processed = 0
 
-        caption_iter = caption_cache.iter_results() if "caption" in stages_to_run else None
-        listing_iter = listing_cache.iter_results() if "listing" in stages_to_run else None
+        caption_iter = (
+            caption_cache.iter_results()
+            if "caption" in stages_to_run
+            else None
+        )
+        listing_iter = (
+            listing_cache.iter_results()
+            if "listing" in stages_to_run
+            else None
+        )
         detection_iter = (
-            detection_cache.iter_results() if "detection" in stages_to_run else None
+            detection_cache.iter_results()
+            if "detection" in stages_to_run
+            else None
         )
         segmentation_iter = (
             segmentation_cache.iter_results()
             if "segmentation" in stages_to_run
             else None
         )
-        depth_iter = depth_cache.iter_results() if "depth" in stages_to_run else None
+        depth_iter = (
+            depth_cache.iter_results() if "depth" in stages_to_run else None
+        )
 
         for batch_index, batch in enumerate(iter_batches(), start=1):
             table = batch.table
@@ -1389,7 +1456,9 @@ def main(
                 )
 
             if segmentation_iter is not None:
-                segmentation_slice = list(itertools.islice(segmentation_iter, span))
+                segmentation_slice = list(
+                    itertools.islice(segmentation_iter, span)
+                )
                 if len(segmentation_slice) != span:
                     raise RuntimeError(
                         "Final write pass received mismatched segmentation chunk size."
@@ -1408,7 +1477,9 @@ def main(
                         raise ValueError(
                             "Segmentation payload missing `shape` for mask upgrade."
                         )
-                    mask_2d = np.asarray(mask_value, dtype=np.uint8).reshape(shape)
+                    mask_2d = np.asarray(mask_value, dtype=np.uint8).reshape(
+                        shape
+                    )
                     item["mask"] = encode_png_u8(mask_2d)
                     item["encoding"] = "png_u8"
 

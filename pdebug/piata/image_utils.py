@@ -1,34 +1,32 @@
-"""Utility helpers for Lance-backed inference nodes."""
+"""Generic image helpers for data IO and lightweight inference outputs."""
 from __future__ import annotations
 import base64
-import json
-import shutil
+import io
 import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Union
 
-from pdebug.piata import Input
-
-import io
 import cv2
 import numpy as np
 from PIL import Image
 
-
-class LanceBatch:
-    """Container for Lance dataset data."""
-
-    __slots__ = ("table", "images", "metadata")
-
-    def __init__(
-        self,
-        table: "pyarrow.Table",
-        images: List[np.ndarray],
-        metadata: List[Dict[str, object]],
-    ) -> None:
-        self.table = table
-        self.images = images
-        self.metadata = metadata
+__all__ = [
+    "bbox_from_mask",
+    "compute_image_stats",
+    "decode_bitmask",
+    "decode_depth_map",
+    "decode_depth_map_uint16",
+    "decode_png_u8",
+    "depth_stub",
+    "deterministic_caption",
+    "encode_bitmask",
+    "encode_depth_map",
+    "encode_depth_map_uint16",
+    "encode_png_u8",
+    "load_image",
+    "scaled_bbox",
+    "segmentation_stub",
+]
 
 
 def load_image(source: Union[str, Path, np.ndarray]) -> np.ndarray:
@@ -48,82 +46,7 @@ def load_image(source: Union[str, Path, np.ndarray]) -> np.ndarray:
 
     if image is None:
         raise ValueError(f"Failed to decode image from {path}")
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    return image
-
-
-def load_lance_batch(
-    dataset_path: Union[str, Path],
-    *,
-    image_col: str = "camera_left",
-    reader_kwargs: Optional[Dict[str, object]] = None,
-) -> LanceBatch:
-    """Load a Lance dataset into memory with decoded RGB frames."""
-    reader_kwargs = reader_kwargs or {}
-    reader = Input(
-        str(dataset_path),
-        name="lance_vita",
-        image_col=image_col,
-        **reader_kwargs,
-    ).get_reader()
-
-    images: List[np.ndarray] = []
-    metadata: List[Dict[str, object]] = []
-    for _ in range(len(reader)):
-        entry = next(reader)
-        metadata.append(entry)
-        images.append(entry["image"])
-    reader.reset()
-
-    table = getattr(reader, "_table", None)
-    if table is None:  # pragma: no cover - Lance reader always exposes _table
-        import lance
-
-        ds = lance.dataset(str(dataset_path))
-        table = ds.to_table()
-
-    return LanceBatch(table=table, images=images, metadata=metadata)
-
-
-def _ensure_parent(path: Union[str, Path]) -> Path:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    return target
-
-
-def write_json(output: Union[str, Path], payload: Dict[str, object]) -> None:
-    """Persist JSON payload with ensured parent directory."""
-    target = _ensure_parent(output)
-    with target.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, ensure_ascii=True)
-
-
-def write_lance_with_column(
-    table: "pyarrow.Table",
-    column_name: str,
-    column_values: Sequence[object],
-    output_path: Union[str, Path],
-) -> Path:
-    """Write Lance dataset with (re)placed column values."""
-    import lance
-    import pyarrow as pa
-
-    if len(table) != len(column_values):
-        raise ValueError(
-            f"Table length {len(table)} differs from column size {len(column_values)}."
-        )
-    arr = pa.array(column_values)
-    if column_name in table.column_names:
-        idx = table.column_names.index(column_name)
-        table = table.set_column(idx, column_name, arr)
-    else:
-        table = table.append_column(column_name, arr)
-
-    output = _ensure_parent(output_path)
-    if output.exists():
-        shutil.rmtree(output)
-    lance.write_dataset(table, str(output))
-    return output
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
 def compute_image_stats(image: np.ndarray) -> Dict[str, float]:
@@ -191,7 +114,7 @@ def encode_bitmask(mask: np.ndarray) -> Dict[str, object]:
 
 
 def encode_png_u8(mask: np.ndarray) -> bytes:
-    """Encode a 2D uint8 mask as PNG bytes (single-channel)."""
+    """Encode a 2D uint8 mask as PNG bytes."""
     if mask.ndim != 2:
         raise ValueError("encode_png_u8 expects a 2D mask.")
     mask_u8 = np.asarray(mask, dtype=np.uint8)
@@ -209,12 +132,12 @@ def encode_png_u8(mask: np.ndarray) -> bytes:
 
 
 def decode_png_u8(data: Union[bytes, bytearray, memoryview]) -> np.ndarray:
-    """Decode PNG bytes into a 2D uint8 mask (single-channel)."""
+    """Decode PNG bytes into a 2D uint8 mask."""
     if isinstance(data, memoryview):
         data = data.tobytes()
     if isinstance(data, bytearray):
         data = bytes(data)
-    if not isinstance(data, (bytes,)):
+    if not isinstance(data, bytes):
         raise TypeError(f"decode_png_u8 expects bytes-like, got {type(data)}")
     if cv2 is not None:
         arr = np.frombuffer(data, dtype=np.uint8)
@@ -241,7 +164,6 @@ def decode_bitmask(
     try:
         height = int(payload["height"])
         width = int(payload["width"])
-        num_bits = int(payload.get("num_bits", height * width))
         data = base64.b64decode(payload["data"])
     except (KeyError, ValueError, TypeError, base64.binascii.Error):
         return None
@@ -267,7 +189,7 @@ def bbox_from_mask(mask: np.ndarray) -> Optional[List[float]]:
 
 
 def encode_depth_map(depth_map: np.ndarray) -> Dict[str, object]:
-    """Encode a depth map (float32/float64) as base64 float16 payload."""
+    """Encode a depth map as base64 float16 payload."""
     if depth_map.ndim != 2:
         raise ValueError("encode_depth_map expects a 2D depth map.")
     height, width = depth_map.shape
@@ -298,25 +220,22 @@ def decode_depth_map(
     arr = np.frombuffer(data, dtype=np.float16)
     if arr.size < height * width:
         return None
-    depth = arr.reshape((height, width)).astype(np.float32)
-    return depth
+    return arr.reshape((height, width)).astype(np.float32)
 
 
 def encode_depth_map_uint16(depth_map: np.ndarray) -> Dict[str, object]:
-    """Encode a depth map (float32/float64) as uint16 png"""
+    """Encode a depth map as uint16 PNG payload."""
     if depth_map.ndim != 2:
         raise ValueError("encode_depth_map_uint16 expects a 2D depth map.")
     height, width = depth_map.shape
-    
-    # Ensure we have numeric data; replace NaNs/Infs with zero and clip into range.
     depth = np.asarray(depth_map, dtype=np.float32)
     depth = np.nan_to_num(depth, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-    depth = (depth * 1000).astype(np.uint16)        # convert m to mm
-    depth = np.clip(depth, 0, np.iinfo(np.uint16).max).astype(np.uint16, copy=False)
-    
-    # PNG stores uint16 in big-endian order; Pillow expects little-endian, so enforce it.
+    depth = (depth * 1000).astype(np.uint16)
+    depth = np.clip(depth, 0, np.iinfo(np.uint16).max).astype(
+        np.uint16, copy=False
+    )
     depth = depth.view(dtype="<u2")
-    
+
     buffer = io.BytesIO()
     Image.fromarray(depth, mode="I;16").save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
@@ -356,8 +275,7 @@ def decode_depth_map_uint16(
         return None
 
     depth_uint16 = depth_uint16.astype(np.dtype("<u2"), copy=False)
-    depth = depth_uint16.astype(np.float32) / 1000.0
-    return depth
+    return depth_uint16.astype(np.float32) / 1000.0
 
 
 def segmentation_stub(
@@ -366,7 +284,6 @@ def segmentation_stub(
     """Generate deterministic segmentation metadata with encoded masks."""
     height = max(1, int(round(stats["height"])))
     width = max(1, int(round(stats["width"])))
-    total_area = float(height * width)
     segments = max(1, segments)
 
     results: List[Dict[str, object]] = []
@@ -378,8 +295,6 @@ def segmentation_stub(
         mask[:, start_x:end_x] = 1
         coverage = float(mask.mean())
         area = float(mask.sum())
-        payload = encode_bitmask(mask)
-        bbox = bbox_from_mask(mask)
         results.append(
             {
                 "id": idx,
@@ -389,54 +304,24 @@ def segmentation_stub(
                 ),
                 "coverage_ratio": float(round(coverage, 4)),
                 "area": float(round(area, 2)),
-                "bbox": bbox,
-                "mask": payload,
+                "bbox": bbox_from_mask(mask),
+                "mask": encode_bitmask(mask),
             }
         )
     return results
 
 
 def depth_stub(stats: Dict[str, float]) -> Dict[str, object]:
-    """Produce deterministic depth statistics with an encoded pseudo depth map."""
+    """Produce deterministic depth statistics with encoded pseudo depth map."""
     height = max(1, int(round(stats["height"])))
     width = max(1, int(round(stats["width"])))
     x = np.linspace(0.0, 1.0, num=width, dtype=np.float32)
     y = np.linspace(0.0, 1.0, num=height, dtype=np.float32).reshape(-1, 1)
     depth_map = (x * 0.6 + y * 0.4) * (stats["mean"] / 255.0 + 0.1)
     depth_map = np.clip(depth_map, 0.0, 1.5)
-    depth_mean = float(depth_map.mean())
-    depth_max = float(depth_map.max())
-    depth_min = float(depth_map.min())
-    payload = encode_depth_map(depth_map)
     return {
-        "mean_depth": float(round(depth_mean, 4)),
-        "min_depth": float(round(depth_min, 4)),
-        "max_depth": float(round(depth_max, 4)),
-        "map": payload,
+        "mean_depth": float(round(float(depth_map.mean()), 4)),
+        "min_depth": float(round(float(depth_map.min()), 4)),
+        "max_depth": float(round(float(depth_map.max()), 4)),
+        "map": encode_depth_map(depth_map),
     }
-
-
-def iterate_images_from_input(
-    input_path: Union[str, Path],
-    *,
-    lance_kwargs: Optional[Dict[str, object]] = None,
-) -> Tuple[Optional[LanceBatch], List[np.ndarray]]:
-    """Return Lance batch when applicable and a list of images to process."""
-    if isinstance(input_path, str) and (
-        input_path.startswith("http://") or input_path.startswith("https://")
-    ):
-        return None, [load_image(input_path)]
-
-    path = Path(input_path)
-    if path.suffix == ".lance":
-        parameters = dict(lance_kwargs or {})
-        image_col = parameters.pop("image_col", "camera_left")
-        batch = load_lance_batch(
-            path, image_col=image_col, reader_kwargs=parameters
-        )
-        return batch, list(batch.images)
-    if path.is_dir():
-        reader = Input(str(path), name="imgdir").get_reader()
-        images = [next(reader) for _ in range(len(reader))]
-        return None, images
-    return None, [load_image(path)]

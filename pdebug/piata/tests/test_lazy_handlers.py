@@ -40,6 +40,7 @@ def test_lazy_handler_maps_cover_external_registrations():
         "labelme",
     }
     assert set(piata_input._SOURCE_MODULES) == {
+        "image",
         "imgdir",
         "imgzip",
         "video",

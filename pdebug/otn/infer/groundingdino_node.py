@@ -8,16 +8,12 @@ deps:
 """
 from __future__ import annotations
 from functools import lru_cache
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional, Union
 
 from pdebug.otn import manager as otn_manager
-from pdebug.otn.infer.lance_utils import (
-    compute_image_stats,
-    iterate_images_from_input,
-    scaled_bbox,
-    write_json,
-    write_lance_with_column,
-)
+from pdebug.otn.infer.io_adapters import run_image_input
+from pdebug.otn.inference import ImageInferenceRunner
+from pdebug.piata import compute_image_stats, scaled_bbox
 from pdebug.utils.env import TORCH_INSTALLED
 
 try:
@@ -106,8 +102,9 @@ def _grounding_cache_clear() -> None:
         try:
             model, _, _ = _load_groundingdino_model()
             if TORCH_INSTALLED:
-                import torch
                 import gc
+
+                import torch
 
                 if torch.cuda.is_available():
                     try:
@@ -245,33 +242,18 @@ def groundingdino_node(
     lance_kwargs: Optional[Dict[str, object]] = None,
 ) -> Union[Dict[str, object], str]:
     """Run GroundingDINO over an image path or Lance dataset."""
-    lance_kwargs = lance_kwargs or {}
-    batch, images = iterate_images_from_input(
-        input_path, lance_kwargs={"image_col": lance_image_col, **lance_kwargs}
+    return run_image_input(
+        ImageInferenceRunner(_grounding_infer),
+        input_path,
+        output,
+        unittest=unittest,
+        output_key=output_key,
+        lance_image_col=lance_image_col,
+        lance_kwargs=lance_kwargs,
+        missing_output_message=(
+            "`output` must be provided for Lance dataset inference."
+        ),
     )
-
-    if batch is not None:
-        if output is None:
-            raise ValueError(
-                "`output` must be provided for Lance dataset inference."
-            )
-        results: List[Dict[str, object]] = []
-        for idx, image in enumerate(images):
-            results.append(
-                _grounding_infer(image, index=idx, unittest=unittest)
-            )
-        written = write_lance_with_column(
-            batch.table, output_key, results, output
-        )
-        return str(written)
-
-    if not images:
-        raise RuntimeError(f"No images found at {input_path}")
-    result = _grounding_infer(images[0], index=0, unittest=unittest)
-    if output:
-        write_json(output, result)
-        return output
-    return result
 
 
 if __name__ == "__main__":  # pragma: no cover

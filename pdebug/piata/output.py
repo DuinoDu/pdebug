@@ -1,6 +1,10 @@
 """Data output"""
 import importlib
+import json
 import os
+import shutil
+from pathlib import Path
+from typing import Sequence
 
 from .registry import OUTPUT_REGISTRY
 
@@ -11,6 +15,64 @@ _OUTPUT_MODULES = {
     "video": "pdebug.piata.handler.destination",
     "video_ffmpeg": "pdebug.piata.handler.destination",
 }
+
+
+@OUTPUT_REGISTRY.register(name="json")
+class JsonWriter:
+    """Write one JSON-serializable payload."""
+
+    def __init__(self, payload, *, indent=2, ensure_ascii=True):
+        self.payload = payload
+        self.indent = indent
+        self.ensure_ascii = ensure_ascii
+
+    def save(self, output_name):
+        with open(output_name, "w", encoding="utf-8") as handle:
+            json.dump(
+                self.payload,
+                handle,
+                indent=self.indent,
+                ensure_ascii=self.ensure_ascii,
+            )
+
+
+@OUTPUT_REGISTRY.register(name="lance_column")
+class LanceColumnWriter:
+    """Write a Lance dataset with a replaced or appended column."""
+
+    def __init__(
+        self,
+        table,
+        *,
+        column_name: str,
+        column_values: Sequence[object],
+    ):
+        self.table = table
+        self.column_name = column_name
+        self.column_values = column_values
+
+    def save(self, output_name):
+        import lance
+        import pyarrow as pa
+
+        if len(self.table) != len(self.column_values):
+            raise ValueError(
+                f"Table length {len(self.table)} differs from column size "
+                f"{len(self.column_values)}."
+            )
+
+        arr = pa.array(self.column_values)
+        table = self.table
+        if self.column_name in table.column_names:
+            idx = table.column_names.index(self.column_name)
+            table = table.set_column(idx, self.column_name, arr)
+        else:
+            table = table.append_column(self.column_name, arr)
+
+        output = Path(output_name)
+        if output.exists():
+            shutil.rmtree(output)
+        lance.write_dataset(table, str(output))
 
 
 def _ensure_registered(name: str) -> None:

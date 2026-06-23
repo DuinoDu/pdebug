@@ -3,6 +3,7 @@ import glob
 import logging
 import os
 import random
+import urllib.request
 import warnings
 import zipfile
 from collections.abc import Iterator
@@ -230,6 +231,58 @@ class ImgDir(Reader):
             raise NotImplementedError
         self._imgfiles.extend(other._imgfiles)
         return self
+
+
+@SOURCE_REGISTRY.register(name="image")
+class ImageReader(Reader):
+    """Read a single image from a path, URL, or ndarray."""
+
+    def __init__(self, image, *, to_rgb=True, imread_raw=False):
+        super().__init__()
+        self.image = image
+        self.to_rgb = to_rgb
+        self.imread_raw = imread_raw
+        if isinstance(image, np.ndarray):
+            self._imgfiles = ["array"]
+        else:
+            self._imgfiles = [str(image)]
+
+    def __next__(self):
+        if self._cur >= 1:
+            raise StopIteration
+        self._cur = 1
+        self._cur_filename = self._imgfiles[0]
+        return self.imread(self.image)
+
+    next = __next__
+
+    def __len__(self):
+        return 1
+
+    def imread(self, image=None):
+        image = self.image if image is None else image
+        if isinstance(image, np.ndarray):
+            return image
+
+        source = str(image)
+        if source.startswith("http://") or source.startswith("https://"):
+            with urllib.request.urlopen(source) as handle:
+                buffer = np.asarray(bytearray(handle.read()), dtype=np.uint8)
+            frame = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+        else:
+            flag = (
+                cv2.IMREAD_UNCHANGED if self.imread_raw else cv2.IMREAD_COLOR
+            )
+            frame = cv2.imread(source, flag)
+
+        if frame is None:
+            raise ValueError(f"Failed to decode image from {source}")
+        if self.to_rgb and frame.ndim == 3:
+            if frame.shape[2] == 4:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGBA)
+            else:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return frame
 
 
 @SOURCE_REGISTRY.register(name="imgzip")

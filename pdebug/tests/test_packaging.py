@@ -70,6 +70,8 @@ def test_wheel_contains_subpackages_and_console_scripts(tmp_path):
         entry_points = archive.read(entry_points_file).decode()
 
     assert "pdebug/otn/manager.py" in names
+    assert "pdebug/otn/infer/manifests/moondream.otn.json" in names
+    assert "pdebug/otn/infer/manifests/sam6d_docker.otn.json" in names
     assert "pdebug/piata/input.py" in names
     assert "pdebug/pdag/runner.py" in names
     assert "runnb = pdebug.runnb.runnb:main" in entry_points

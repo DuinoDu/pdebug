@@ -18,23 +18,19 @@ Usage:
 """
 
 from __future__ import annotations
+import io
 from pathlib import Path
 from typing import Dict, Optional, Sequence
 
 from pdebug.otn.infer import internimage_semseg as semseg_module
-from pdebug.otn.infer.lance_utils import (
-    LanceBatch,
-    decode_depth_map,
-    decode_depth_map_uint16,
-    load_lance_batch,
-)
+from pdebug.piata import load_lance_batch
+
 import cv2
+import lance
 import numpy as np
+import pyarrow as pa
 import typer
 from loguru import logger
-import lance
-import pyarrow as pa
-import io
 
 try:
     from PIL import Image
@@ -69,7 +65,6 @@ from use_with_lance import (  # type: ignore[import-untyped]
     _render_tags,
 )
 
-
 app = typer.Typer(
     help="Generate visualizations from an annotated Lance dataset."
 )
@@ -85,7 +80,7 @@ def _visualize_models(
     batch_size: int,
     timestamp_col: Optional[str],
     video_id_col: Optional[str],
-    frame_num_col: Optional[str],   
+    frame_num_col: Optional[str],
     trigger: Optional[str],
 ) -> None:
     """Visualize models from Lance dataset.
@@ -112,7 +107,6 @@ def _visualize_models(
 
     ds = lance.dataset(str(dataset_path))
     scanner = ds.scanner(batch_size=batch_size)
-    
 
     for batch_index, batch in enumerate(scanner.to_batches(), start=1):
         batch_len = batch.num_rows
@@ -129,7 +123,10 @@ def _visualize_models(
             entry_trigger = entry.get("trigger")
             if trigger:
                 current_trigger = entry_trigger
-                while isinstance(current_trigger, (list, tuple)) and len(current_trigger) > 0:
+                while (
+                    isinstance(current_trigger, (list, tuple))
+                    and len(current_trigger) > 0
+                ):
                     current_trigger = current_trigger[0]
                 if str(current_trigger) != trigger:
                     continue
@@ -147,14 +144,18 @@ def _visualize_models(
                 )
                 global_index += 1
                 continue
-            
+
             image = None
             try:
                 # Try PIL
-                if 'PIL' in sys.modules and hasattr(sys.modules.get('PIL'), 'Image'):
+                if "PIL" in sys.modules and hasattr(
+                    sys.modules.get("PIL"), "Image"
+                ):
                     # Need to read as bytes IO
                     # entry[image_col] is bytes
-                    with sys.modules['PIL'].Image.open(io.BytesIO(image_bytes)) as handle:
+                    with sys.modules["PIL"].Image.open(
+                        io.BytesIO(image_bytes)
+                    ) as handle:
                         image = np.asarray(handle.convert("RGB"))
                 else:
                     # CV2 fallback
@@ -163,7 +164,9 @@ def _visualize_models(
                     if image is not None:
                         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             except Exception as e:
-                logger.warning(f"Failed to decode image at row {global_index}: {e}")
+                logger.warning(
+                    f"Failed to decode image at row {global_index}: {e}"
+                )
 
             if image is None:
                 logger.warning(
@@ -346,9 +349,7 @@ def main(
     output_dir = output_dir.resolve()
 
     if not dataset_path.exists():
-        raise typer.BadParameter(
-            f"Input dataset not found at {dataset_path}"
-        )
+        raise typer.BadParameter(f"Input dataset not found at {dataset_path}")
 
     reader_kwargs = _build_reader_kwargs(
         timestamp_col=timestamp_col,
@@ -395,4 +396,3 @@ def main(
 
 if __name__ == "__main__":
     app()
-

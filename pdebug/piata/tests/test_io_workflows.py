@@ -1,4 +1,6 @@
-from pdebug.piata import Input, Output
+import json
+
+from pdebug.piata import Input, Output, read_image_batch, write_json_result
 from pdebug.piata.type_cast import (
     boxes_to_points,
     keypoints_to_points,
@@ -41,6 +43,24 @@ def test_imgdir_reader_converts_camera_frames_to_rgb_when_requested(tmp_path):
     rgb_frame = next(reader)
     expected_rgb = np.full_like(bgr_frame, [210, 90, 15])
     np.testing.assert_array_equal(rgb_frame, expected_rgb)
+
+
+def test_image_input_reads_single_rgb_frame_and_json_output(tmp_path):
+    bgr_frame = np.zeros((4, 5, 3), dtype=np.uint8)
+    bgr_frame[:, :] = [10, 80, 200]
+    image_path = tmp_path / "single.png"
+    json_path = tmp_path / "result.json"
+    cv2.imwrite(str(image_path), bgr_frame)
+
+    reader = Input(str(image_path), name="image").get_reader()
+    image_batch = read_image_batch(str(image_path))
+    write_json_result(json_path, {"ok": True, "count": 1})
+
+    expected_rgb = np.full_like(bgr_frame, [200, 80, 10])
+    np.testing.assert_array_equal(next(reader), expected_rgb)
+    np.testing.assert_array_equal(image_batch.images[0], expected_rgb)
+    assert image_batch.source_type == "image"
+    assert json.loads(json_path.read_text()) == {"ok": True, "count": 1}
 
 
 def test_points_and_keypoints_roundtrip_for_landmark_annotations():

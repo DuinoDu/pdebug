@@ -24,6 +24,7 @@ _ROIDB_MODULES = {
     "labelme": "pdebug.piata.handler.labelme",
 }
 _SOURCE_MODULES = {
+    "image": "pdebug.piata.handler.source",
     "imgdir": "pdebug.piata.handler.source",
     "imgzip": "pdebug.piata.handler.source",
     "video": "pdebug.piata.handler.source",

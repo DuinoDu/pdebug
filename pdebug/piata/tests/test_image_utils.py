@@ -1,6 +1,7 @@
+"""Practical tests for Piata image helpers."""
 from __future__ import annotations
 
-from pdebug.otn.infer.lance_utils import (
+from pdebug.piata import (
     bbox_from_mask,
     compute_image_stats,
     decode_bitmask,

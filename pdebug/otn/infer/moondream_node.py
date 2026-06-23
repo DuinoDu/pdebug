@@ -2,16 +2,12 @@
 from __future__ import annotations
 import time
 from functools import lru_cache
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional, Union
 
 from pdebug.otn import manager as otn_manager
-from pdebug.otn.infer.lance_utils import (
-    compute_image_stats,
-    deterministic_caption,
-    iterate_images_from_input,
-    write_json,
-    write_lance_with_column,
-)
+from pdebug.otn.infer.io_adapters import run_image_input
+from pdebug.otn.inference import ImageInferenceRunner
+from pdebug.piata import compute_image_stats, deterministic_caption
 from pdebug.utils.env import TORCH_INSTALLED, TRANSFORMERS_INSTALLED
 
 from packaging.version import Version
@@ -123,8 +119,9 @@ def _moondream_cache_clear() -> None:
         try:
             model, _ = _load_moondream_model()
             if TORCH_INSTALLED:
-                import torch
                 import gc
+
+                import torch
 
                 try:
                     if hasattr(model, "to"):
@@ -174,33 +171,15 @@ def moondream_node(
 
     torch >= 2,5.0 is required.
     """
-    lance_kwargs = lance_kwargs or {}
-    batch, images = iterate_images_from_input(
-        input_path, lance_kwargs={"image_col": lance_image_col, **lance_kwargs}
+    return run_image_input(
+        ImageInferenceRunner(_moondream_infer),
+        input_path,
+        output,
+        unittest=unittest,
+        output_key=output_key,
+        lance_image_col=lance_image_col,
+        lance_kwargs=lance_kwargs,
     )
-
-    if batch is not None:
-        if output is None:
-            raise ValueError(
-                "`output` is required when writing Lance results."
-            )
-        results: List[Dict[str, object]] = []
-        for idx, image in enumerate(images):
-            results.append(
-                _moondream_infer(image, index=idx, unittest=unittest)
-            )
-        written = write_lance_with_column(
-            batch.table, output_key, results, output
-        )
-        return str(written)
-
-    if not images:
-        raise RuntimeError(f"No images found at {input_path}")
-    result = _moondream_infer(images[0], index=0, unittest=unittest)
-    if output:
-        write_json(output, result)
-        return output
-    return result
 
 
 if __name__ == "__main__":  # pragma: no cover

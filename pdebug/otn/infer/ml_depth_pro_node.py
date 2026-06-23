@@ -1,17 +1,12 @@
 """OTN inference node for Apple's ML-Depth-Pro model."""
 from __future__ import annotations
 from functools import lru_cache
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional, Union
 
 from pdebug.otn import manager as otn_manager
-from pdebug.otn.infer.lance_utils import (
-    compute_image_stats,
-    depth_stub,
-    encode_depth_map,
-    iterate_images_from_input,
-    write_json,
-    write_lance_with_column,
-)
+from pdebug.otn.infer.io_adapters import run_image_input
+from pdebug.otn.inference import ImageInferenceRunner
+from pdebug.piata import compute_image_stats, depth_stub, encode_depth_map
 from pdebug.utils.env import TORCH_INSTALLED
 
 try:
@@ -82,8 +77,9 @@ def _depth_cache_clear() -> None:
         try:
             model, _, _ = _load_depth_pro_model()
             if TORCH_INSTALLED:
-                import torch
                 import gc
+
+                import torch
 
                 if torch.cuda.is_available():
                     try:
@@ -118,7 +114,9 @@ def _depth_cache_clear() -> None:
 _load_depth_pro_model.cache_clear = _depth_cache_clear  # type: ignore[assignment]
 
 
-def _depth_infer(image, *, unittest: bool) -> Dict[str, object]:
+def _depth_infer(
+    image, *, index: int = 0, unittest: bool
+) -> Dict[str, object]:
     stats = compute_image_stats(image)
     if unittest:
         return _dummy_depth(stats)
@@ -178,31 +176,18 @@ def ml_depth_pro_node(
     lance_kwargs: Optional[Dict[str, object]] = None,
 ) -> Union[Dict[str, object], str]:
     """Run ML-Depth-Pro over an image path or Lance dataset."""
-    lance_kwargs = lance_kwargs or {}
-    batch, images = iterate_images_from_input(
-        input_path, lance_kwargs={"image_col": lance_image_col, **lance_kwargs}
+    return run_image_input(
+        ImageInferenceRunner(_depth_infer),
+        input_path,
+        output,
+        unittest=unittest,
+        output_key=output_key,
+        lance_image_col=lance_image_col,
+        lance_kwargs=lance_kwargs,
+        missing_output_message=(
+            "`output` must be specified for Lance dataset outputs."
+        ),
     )
-
-    if batch is not None:
-        if output is None:
-            raise ValueError(
-                "`output` must be specified for Lance dataset outputs."
-            )
-        results: List[Dict[str, object]] = []
-        for image in images:
-            results.append(_depth_infer(image, unittest=unittest))
-        written = write_lance_with_column(
-            batch.table, output_key, results, output
-        )
-        return str(written)
-
-    if not images:
-        raise RuntimeError(f"No images found at {input_path}")
-    result = _depth_infer(images[0], unittest=unittest)
-    if output:
-        write_json(output, result)
-        return output
-    return result
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -1,9 +1,15 @@
 """OTN command line interface."""
 import inspect
+import json
 import os
 from typing import Optional
 
 from pdebug.otn import manager as otn_manager
+from pdebug.otn.inference import (
+    manifest_schema,
+    node_healthcheck,
+    node_to_schema,
+)
 from pdebug.utils.fileio import do_system
 
 import typer
@@ -48,6 +54,12 @@ def main(
     print_node_file: Optional[bool] = typer.Option(
         None, help="show node func help"
     ),
+    schema_node: Optional[bool] = typer.Option(
+        None, help="print node manifest/schema metadata"
+    ),
+    doctor_node: Optional[bool] = typer.Option(
+        None, help="run node backend health diagnostics"
+    ),
     force_single_process: Optional[bool] = typer.Option(
         None, help="force run node in main process"
     ),
@@ -57,10 +69,30 @@ def main(
     Example:
         >> otn-cli --node xxx --args_to_node
     """
+    (
+        list_node,
+        help_node,
+        print_node_file,
+        schema_node,
+        doctor_node,
+        force_single_process,
+    ) = otn_manager.check_optional(
+        list_node,
+        help_node,
+        print_node_file,
+        schema_node,
+        doctor_node,
+        force_single_process,
+    )
+
     if list_node:
         otn_manager.load_extension_nodes(strict=False)
         node_info = repr(otn_manager.NODE)
         print(node_info)
+        return
+
+    if schema_node and not node:
+        print(json.dumps(manifest_schema(), indent=2, default=str))
         return
 
     if not node:
@@ -85,8 +117,24 @@ def main(
         return
 
     if print_node_file:
-        filepath = inspect.getsourcefile(node_func)
+        filepath = getattr(node_func, "manifest_path", None)
+        if filepath is None:
+            filepath = inspect.getsourcefile(node_func)
         print(filepath)
+        return
+
+    if schema_node:
+        print(json.dumps(node_to_schema(node_func), indent=2, default=str))
+        return
+
+    if doctor_node:
+        print(
+            json.dumps(
+                node_healthcheck(node_func).to_dict(),
+                indent=2,
+                default=str,
+            )
+        )
         return
 
     node_kwargs = {}

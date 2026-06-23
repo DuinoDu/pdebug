@@ -7,12 +7,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 from pdebug.otn import manager as otn_manager
-from pdebug.otn.infer.lance_utils import (
+from pdebug.piata import (
+    Input,
     compute_image_stats,
-    iterate_images_from_input,
-    write_lance_with_column,
+    read_image_batch,
+    write_lance_column,
 )
-from pdebug.piata import Input
 from pdebug.utils.env import TORCH_INSTALLED
 
 import cv2
@@ -73,8 +73,9 @@ def _qwen_cache_clear() -> None:
         try:
             model, _ = _load_qwen_model()
             if TORCH_INSTALLED:
-                import torch
                 import gc
+
+                import torch
 
                 if torch.cuda.is_available():
                     try:
@@ -222,21 +223,23 @@ def lance_dataset_infer(
             "`output` must be provided for Lance dataset inference."
         )
     lance_parameters = {"image_col": "camera_left", **(lance_kwargs or {})}
-    batch, images = iterate_images_from_input(
-        input_path, lance_kwargs=lance_parameters
+    batch = read_image_batch(
+        input_path,
+        image_col="camera_left",
+        lance_kwargs=lance_parameters,
     )
-    if batch is None:
+    if batch.source_type != "lance":
         raise RuntimeError(f"Failed to load Lance dataset from {input_path}")
 
     if unittest:
         results: List[Dict[str, object]] = []
-        for idx, image in enumerate(images):
+        for idx, image in enumerate(batch.images):
             stats = compute_image_stats(image)
             results.append(_dummy_tags(stats, idx))
     else:
-        results = _real_qwen_dataset_infer(images, prompt=text)
+        results = _real_qwen_dataset_infer(batch.images, prompt=text)
 
-    written = write_lance_with_column(batch.table, output_key, results, output)
+    written = write_lance_column(batch.table, output_key, results, output)
     return str(written)
 
 
