@@ -70,8 +70,22 @@ def test_wheel_contains_subpackages_and_console_scripts(tmp_path):
         entry_points = archive.read(entry_points_file).decode()
 
     assert "pdebug/otn/manager.py" in names
+    assert "pdebug/otn/infer/base/__init__.py" in names
     assert "pdebug/otn/infer/manifests/moondream.otn.json" in names
     assert "pdebug/otn/infer/manifests/sam6d_docker.otn.json" in names
+    assert "pdebug/otn/infer/manifests/cotracker.otn.json" in names
+    assert "pdebug/otn/infer/manifests/vggt.otn.json" in names
+    assert (
+        len(
+            [
+                name
+                for name in names
+                if name.startswith("pdebug/otn/infer/manifests/")
+                and name.endswith(".otn.json")
+            ]
+        )
+        >= 30
+    )
     assert "pdebug/piata/input.py" in names
     assert "pdebug/pdag/runner.py" in names
     assert "runnb = pdebug.runnb.runnb:main" in entry_points

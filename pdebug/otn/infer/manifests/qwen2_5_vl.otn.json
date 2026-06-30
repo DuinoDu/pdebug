@@ -1,0 +1,47 @@
+{
+  "name": "qwen2_5_vl",
+  "task": "inference",
+  "description": "Infer using qwen2.5-vl",
+  "backend": {
+    "type": "legacy_python",
+    "function": "main",
+    "module": "pdebug.otn.infer.qwen2_5_vl"
+  },
+  "schemas": {
+    "input": "ImageOrLanceRequest",
+    "output": "TagsResult"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "text": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": null
+    },
+    "unittest": {
+      "type": "bool",
+      "default": false
+    },
+    "cache": {
+      "type": "bool",
+      "default": true
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": true,
+    "lance": true,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

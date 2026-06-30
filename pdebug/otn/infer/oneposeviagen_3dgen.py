@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input
 from pdebug.utils.fileio import do_system
 
@@ -17,7 +16,57 @@ import typer
 from PIL import Image
 
 
-@otn_manager.NODE.register(name="oneposeviagen_3dgen")
+def _append_repo_path(repo: Path) -> None:
+    for path in (
+        repo,
+        repo / "oneposeviagen",
+        repo / "oneposeviagen" / "trellis",
+        repo / "oneposeviagen" / "Amodal3R",
+    ):
+        path_str = str(path)
+        if path.exists() and path_str not in sys.path:
+            sys.path.append(path_str)
+
+
+def _missing_dependency_error(missing: str, repo: Path) -> RuntimeError:
+    return RuntimeError(
+        "OnePoseViaGen 3D generation dependency missing: "
+        f"{missing}. Install the official OnePoseViaGen environment and "
+        f"download checkpoints under {repo}/checkpoints/OnePoseViaGen."
+    )
+
+
+def _patch_timm_layers_compat() -> None:
+    """Expose new timm layer imports when an older timm is installed."""
+    try:
+        import timm.layers as timm_layers
+        import timm.models.layers as model_layers
+    except ImportError:
+        return
+    for name in (
+        "DropPath",
+        "get_act_layer",
+        "lecun_normal_",
+        "resample_abs_pos_embed",
+        "to_2tuple",
+        "trunc_normal_",
+    ):
+        if not hasattr(timm_layers, name) and hasattr(model_layers, name):
+            setattr(timm_layers, name, getattr(model_layers, name))
+
+
+def _move_pipeline_to_cuda(pipeline) -> None:
+    try:
+        import torch
+    except ImportError as exc:
+        raise RuntimeError(
+            "OnePoseViaGen 3D generation requires PyTorch."
+        ) from exc
+    if not torch.cuda.is_available():
+        raise RuntimeError("OnePoseViaGen 3D generation requires CUDA.")
+    pipeline.to(torch.device("cuda"))
+
+
 def main(
     rgb_path: str,
     masks_path: str,
@@ -31,6 +80,10 @@ def main(
     slat_sampling_steps: int = 25,
     is_occluded: bool = False,
     model_type: str = "hi3dgen",
+    preview_resolution: int = 1024,
+    preview_num_frames: int = 120,
+    preview_fps: int = 15,
+    generate_gaussian: bool = True,
 ):
     """
     3D model generation for OnePoseviaGen pipeline.
@@ -48,7 +101,16 @@ def main(
         slat_sampling_steps: SLAT sampling steps
         is_occluded: Whether object is occluded
         model_type: Model type (hi3dgen or amodal3r)
+        preview_resolution: Resolution for the preview render
+        preview_num_frames: Number of preview frames to render
+        preview_fps: Preview video frames per second
+        generate_gaussian: Whether to decode Gaussian output and run
+            Gaussian-backed postprocessing.
     """
+    repo = Path(repo).expanduser().resolve()
+    _append_repo_path(repo)
+    _patch_timm_layers_compat()
+
     try:
         from amodal3r.pipelines import Amodal3RImageTo3DPipeline
         from amodal3r.utils import postprocessing_utils, render_utils
@@ -58,20 +120,13 @@ def main(
         )
         from trellis.utils import render_utils as render_utils_hi3dgen
     except ImportError as e:
-        print(f"Warning: Required modules not available: {e}")
-        Amodal3RImageTo3DPipeline = None
-        TrellisImageTo3DPipeline = None
-
-    if Amodal3RImageTo3DPipeline is None or TrellisImageTo3DPipeline is None:
-        raise RuntimeError(
-            "Required modules not installed. Please install OnePoseviaGen."
-        )
+        missing = getattr(e, "name", str(e))
+        raise _missing_dependency_error(missing, repo) from e
 
     # Expand paths
     rgb_path = Path(rgb_path).expanduser().resolve()
     masks_path = Path(masks_path).expanduser().resolve()
     output = Path(output).expanduser().resolve()
-    repo = Path(repo).expanduser().resolve()
 
     output.mkdir(parents=True, exist_ok=True)
 
@@ -115,18 +170,20 @@ def main(
     # Generate 3D model
     model_dir = output / "model"
     model_dir.mkdir(exist_ok=True)
+    formats = ["mesh", "gaussian"] if generate_gaussian else ["mesh"]
 
     if is_occluded or model_type == "amodal3r":
         # Use Amodal3R
         pipeline = Amodal3RImageTo3DPipeline.from_pretrained(
             repo / "checkpoints" / "OnePoseViaGen" / "Amodal3R"
         )
+        _move_pipeline_to_cuda(pipeline)
 
         outputs = pipeline.run_multi_image(
             [processed_rgb],
             [final_mask],
             seed=seed,
-            formats=["mesh", "gaussian"],
+            formats=formats,
             sparse_structure_sampler_params={
                 "steps": ss_sampling_steps,
                 "cfg_strength": ss_guidance_strength,
@@ -138,28 +195,33 @@ def main(
         )
 
         generated_mesh = outputs["mesh"][0]
-        generated_gs = outputs["gaussian"][0]
-
-        # Save video and mesh
-        video_geo = render_utils.render_video(
-            generated_gs, resolution=1024, num_frames=120
-        )["color"]
         mesh_path = model_dir / "model.obj"
-        trimesh_mesh = postprocessing_utils.to_glb(
-            generated_gs, generated_mesh, verbose=False
-        )
+        if generate_gaussian:
+            generated_gs = outputs["gaussian"][0]
+            video_geo = render_utils.render_video(
+                generated_gs,
+                resolution=preview_resolution,
+                num_frames=preview_num_frames,
+            )["color"]
+            trimesh_mesh = postprocessing_utils.to_glb(
+                generated_gs, generated_mesh, verbose=False
+            )
+        else:
+            video_geo = None
+            trimesh_mesh = _mesh_result_to_trimesh(generated_mesh)
 
     else:
         # Use Hi3DGen
         pipeline = TrellisImageTo3DPipeline.from_pretrained(
             repo / "checkpoints" / "OnePoseViaGen" / "Hi3DGen_Color"
         )
+        _move_pipeline_to_cuda(pipeline)
 
         outputs = pipeline.run(
             processed_rgb,
             seed=seed,
-            formats=["mesh", "gaussian"],
-            preprocess_image=True,
+            formats=formats,
+            preprocess_image=False,
             sparse_structure_sampler_params={
                 "steps": ss_sampling_steps,
                 "cfg_strength": ss_guidance_strength,
@@ -171,22 +233,30 @@ def main(
         )
 
         generated_mesh = outputs["mesh"][0]
-        generated_gs = outputs["gaussian"][0]
 
         # Save video and mesh
         video_geo = render_utils_hi3dgen.render_video(
-            generated_mesh, resolution=1024, num_frames=120
+            generated_mesh,
+            resolution=preview_resolution,
+            num_frames=preview_num_frames,
         )["color"]
         mesh_path = model_dir / "model.obj"
-        trimesh_mesh = postprocessing_utils_hi3dgen.to_trimesh(
-            generated_gs, generated_mesh, verbose=False
-        )
+        if generate_gaussian:
+            generated_gs = outputs["gaussian"][0]
+            trimesh_mesh = postprocessing_utils_hi3dgen.to_trimesh(
+                generated_gs, generated_mesh, verbose=False
+            )
+        else:
+            trimesh_mesh = _mesh_result_to_trimesh(generated_mesh)
 
     # Save preview video
     import imageio
 
     preview_path = model_dir / "preview.mp4"
-    imageio.mimsave(str(preview_path), video_geo, fps=15)
+    if video_geo is not None:
+        imageio.mimsave(str(preview_path), video_geo, fps=preview_fps)
+    else:
+        preview_path = None
 
     # Save mesh
     import trimesh
@@ -194,11 +264,11 @@ def main(
     # Rotate to correct orientation
     R = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
     trimesh_mesh.apply_transform(R)
-    trimesh_mesh.export(str(mesh_path), file_type="obj")
+    _safe_export_obj(trimesh_mesh, mesh_path)
 
     # Save high resolution mesh
     high_mesh_path = model_dir / "high_mesh.obj"
-    _save_mesh(generated_mesh, str(high_mesh_path))
+    _save_mesh(generated_mesh, high_mesh_path)
 
     # Save metadata
     metadata = {
@@ -207,7 +277,8 @@ def main(
         "seed": seed,
         "mesh_path": str(mesh_path),
         "high_mesh_path": str(high_mesh_path),
-        "preview_path": str(preview_path),
+        "preview_path": str(preview_path) if preview_path is not None else None,
+        "generate_gaussian": generate_gaussian,
     }
 
     with open(output / "metadata.json", "w") as f:
@@ -273,35 +344,57 @@ def _process_rgb_image(
     return result_pil
 
 
-def _save_mesh(mesh_result, filename: str):
-    """Save mesh to file."""
+def _mesh_result_to_trimesh(mesh_result):
     import trimesh
 
     vertices = (
-        mesh_result.vertices.cpu().numpy()
-        if hasattr(mesh_result.vertices, "cpu")
+        mesh_result.vertices.detach().cpu().numpy()
+        if hasattr(mesh_result.vertices, "detach")
         else mesh_result.vertices
     )
     faces = (
-        mesh_result.faces.cpu().numpy()
-        if hasattr(mesh_result.faces, "cpu")
+        mesh_result.faces.detach().cpu().numpy()
+        if hasattr(mesh_result.faces, "detach")
         else mesh_result.faces
     )
-
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-
-    if (
-        hasattr(mesh_result, "vertex_attrs")
-        and mesh_result.vertex_attrs is not None
-    ):
+    vertex_attrs = getattr(mesh_result, "vertex_attrs", None)
+    if vertex_attrs is not None:
         attrs = (
-            mesh_result.vertex_attrs.cpu().numpy()
-            if hasattr(mesh_result.vertex_attrs, "cpu")
-            else mesh_result.vertex_attrs
+            vertex_attrs.detach().cpu().numpy()
+            if hasattr(vertex_attrs, "detach")
+            else vertex_attrs
         )
         mesh.visual.vertex_colors = attrs
+    return mesh
 
-    mesh.export(filename)
+
+def _safe_export_obj(mesh, filename: Path | str) -> None:
+    """Write OBJ text directly to avoid native exporter crashes."""
+    filename = Path(filename)
+    filename.parent.mkdir(parents=True, exist_ok=True)
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    with open(filename, "w", encoding="utf-8") as file:
+        file.write("# Generated by pdebug OnePoseViaGen integration\n")
+        for vertex in vertices:
+            file.write(
+                f"v {vertex[0]:.8f} {vertex[1]:.8f} {vertex[2]:.8f}\n"
+            )
+        for face in faces:
+            if len(face) == 3:
+                file.write(
+                    f"f {face[0] + 1} {face[1] + 1} {face[2] + 1}\n"
+                )
+            else:
+                indices = " ".join(str(int(index) + 1) for index in face)
+                file.write(f"f {indices}\n")
+
+
+def _save_mesh(mesh_result, filename: Path | str):
+    """Save mesh to file."""
+    mesh = _mesh_result_to_trimesh(mesh_result)
+    _safe_export_obj(mesh, filename)
 
 
 if __name__ == "__main__":

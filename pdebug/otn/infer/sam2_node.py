@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input, Output
 from pdebug.utils.fileio import do_system
 from pdebug.visp import draw
@@ -22,7 +21,6 @@ import numpy as np
 import typer
 
 
-@otn_manager.NODE.register(name="sam2")
 def sam2_main(
     input_path: str,
     points: str = None,
@@ -229,7 +227,6 @@ def sam2_main(
     return str(output)
 
 
-@otn_manager.NODE.register(name="sam_with_prompt")
 def sam_with_prompt_main(
     input_path: str,
     output: str = "sam_prompt_output",

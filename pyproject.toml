@@ -108,6 +108,9 @@ addopts = [
     "--color=yes",
     "--durations=10",
 ]
+markers = [
+    "model_integration: tests that download model repos/weights and run real inference; gated by PDEBUG_RUN_MODEL_INTEGRATION=1",
+]
 junit_duration_report = "call"
 
 [tool.coverage.report]

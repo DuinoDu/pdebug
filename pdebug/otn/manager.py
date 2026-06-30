@@ -180,7 +180,7 @@ def load_manifest_nodes(strict: bool = False) -> None:
         os.path.join(base_dir, node_dir) for node_dir in _EXTENSION_DIRS
     ]
     try:
-        from pdebug.otn.inference import register_manifest_nodes
+        from pdebug.otn.infer.base import register_manifest_nodes
 
         _MANIFEST_LOAD_ERRORS = register_manifest_nodes(
             NODE,
@@ -207,11 +207,14 @@ def load_extension_nodes(strict: bool = False) -> None:
 
     errors = []
     base_dir = os.path.dirname(__file__)
+    skip_paths = (os.path.join(base_dir, "infer", "base"),)
     load_manifest_nodes(strict=strict)
     for node_dir in _EXTENSION_DIRS:
         errors.extend(
             NODE.find_node_from_folder(
-                os.path.join(base_dir, node_dir), strict=strict
+                os.path.join(base_dir, node_dir),
+                skip=skip_paths,
+                strict=strict,
             )
         )
     _EXTENSION_LOAD_ERRORS = errors

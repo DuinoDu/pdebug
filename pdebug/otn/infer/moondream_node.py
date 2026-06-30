@@ -4,9 +4,8 @@ import time
 from functools import lru_cache
 from typing import Dict, Optional, Union
 
-from pdebug.otn import manager as otn_manager
+from pdebug.otn.infer.base import ImageInferenceRunner
 from pdebug.otn.infer.io_adapters import run_image_input
-from pdebug.otn.inference import ImageInferenceRunner
 from pdebug.piata import compute_image_stats, deterministic_caption
 from pdebug.utils.env import TORCH_INSTALLED, TRANSFORMERS_INSTALLED
 
@@ -157,7 +156,6 @@ def _moondream_cache_clear() -> None:
 _load_moondream_model.cache_clear = _moondream_cache_clear  # type: ignore[assignment]
 
 
-@otn_manager.NODE.register(name="moondream")
 def moondream_node(
     input_path: str,
     output: Optional[str] = None,

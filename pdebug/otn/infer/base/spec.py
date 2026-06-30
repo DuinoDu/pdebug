@@ -21,7 +21,12 @@ class BackendSpec:
         return cls(type=backend_type, config=config)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"type": self.type, **self.config}
+        config = {
+            key: value
+            for key, value in self.config.items()
+            if not key.startswith("_")
+        }
+        return {"type": self.type, **config}
 
 
 @dataclass
@@ -50,6 +55,8 @@ class NodeSpec:
         if "backend" not in payload:
             raise ValueError("backend is required")
         backend = BackendSpec.from_dict(payload["backend"])
+        if manifest_path is not None:
+            backend.config.setdefault("_manifest_path", str(manifest_path))
         return cls(
             name=str(payload["name"]),
             task=str(payload.get("task", "generic")),

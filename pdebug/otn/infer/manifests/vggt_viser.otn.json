@@ -1,0 +1,52 @@
+{
+  "name": "vggt-viser",
+  "task": "inference",
+  "description": "Visualize vggt result using viser.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "vggt_viser",
+    "module": "pdebug.otn.infer.vggt_node"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "port": {
+      "type": "int",
+      "default": 6150
+    },
+    "init_conf_threshold": {
+      "type": "float",
+      "default": 50.0
+    },
+    "use_point_map": {
+      "type": "bool",
+      "default": false
+    },
+    "background_mode": {
+      "type": "bool",
+      "default": false
+    },
+    "mask_sky": {
+      "type": "bool",
+      "default": false
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

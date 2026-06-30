@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pdebug.otn import cli as otn_cli
 from pdebug.otn import manager as otn_manager
-from pdebug.otn.inference import (
+from pdebug.otn.infer.base import (
     BackendSpec,
     DockerBackend,
     HealthStatus,
@@ -109,6 +109,30 @@ def test_subprocess_backend_uses_json_file_protocol(tmp_path):
     assert result["data"] == {"seen": 7}
 
 
+def test_legacy_python_backend_can_load_relative_file_manifest(tmp_path):
+    backend_file = tmp_path / "external_backend.py"
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir()
+    manifest = manifest_dir / "file_backend.otn.json"
+    backend_file.write_text(
+        "def echo(value):\n" "    return {'seen': value}\n",
+        encoding="utf-8",
+    )
+    _write_manifest(
+        manifest,
+        name="file_backend",
+        backend={
+            "type": "legacy_python",
+            "file": "../external_backend.py",
+            "function": "echo",
+        },
+    )
+    node = InferenceNode(load_node_spec(str(manifest)))
+
+    assert node(value=5) == {"seen": 5}
+    assert "_manifest_path" not in node_to_schema(node)["backend"]
+
+
 class _JsonHandler(BaseHTTPRequestHandler):
     # BaseHTTPRequestHandler dispatches this exact method name.
     def do_POST(self):  # noqa: N802
@@ -176,6 +200,12 @@ def test_docker_backend_builds_container_command_without_running_docker(
     assert "example/model:latest" in command
     assert "MODEL_CACHE=/cache" in command
     assert "/models:/models" in command
+    assert command[-2:] == ["python", "/app/infer.py"]
+
+    spec.config["append_io_args"] = True
+    command = backend.build_command(
+        tmp_path / "request.json", tmp_path / "result.json"
+    )
     assert command[-4:] == [
         "--input",
         "/otn_io/request.json",
@@ -367,6 +397,62 @@ def test_external_model_manifests_are_loadable_without_running_backends():
     ]
 
 
+def test_infer_model_nodes_are_manifest_backed_without_legacy_scan(
+    monkeypatch,
+):
+    manifest_node_names = {
+        "cad-to-templates",
+        "cotracker",
+        "depth-anything-video",
+        "depth_anything",
+        "foundpose-to-linemod",
+        "genpose2",
+        "groundingdino",
+        "hunyuan3d_paint",
+        "hunyuan3d_rembg",
+        "hunyuan3d_shape",
+        "internimage_semseg",
+        "langsam_for_aigc",
+        "langsam_predict",
+        "langsam_sam",
+        "ml_depth_pro",
+        "moondream",
+        "oneposeviagen_3dgen",
+        "oneposeviagen_pose",
+        "oneposeviagen_scale",
+        "orient_anything",
+        "qwen2_5_vl",
+        "remove_dynamic",
+        "sam2",
+        "sam6d",
+        "sam6d-from-sam2",
+        "sam6d-to-linemod",
+        "sam6d-to-sam2",
+        "sam_with_prompt",
+        "segment_anything",
+        "spatracker",
+        "templates-to-linemod",
+        "vggt",
+        "vggt-viser",
+        "video_kps_to_all",
+    }
+    for name in manifest_node_names:
+        otn_manager.NODE._obj_map.pop(name, None)
+    monkeypatch.setattr(otn_manager, "_EXTENSIONS_LOADED", False)
+    monkeypatch.setattr(
+        otn_manager.NODE,
+        "find_node_from_folder",
+        lambda *args, **kwargs: pytest.fail(
+            "legacy extension scan should not be needed"
+        ),
+    )
+
+    for name in sorted(manifest_node_names):
+        node = otn_manager.create(name)
+        assert isinstance(node, InferenceNode), name
+        assert node.spec.backend.type == "legacy_python"
+
+
 def test_docker_manifest_healthcheck_reports_environment_without_crashing():
     sam6d = InferenceNode(
         load_node_spec("pdebug/otn/infer/manifests/sam6d_docker.otn.json")
@@ -456,8 +542,8 @@ def test_runner_migrated_nodes_keep_single_image_and_signature_behaviour(
 def test_image_input_adapter_preserves_output_key_and_missing_output_message(
     monkeypatch,
 ):
+    from pdebug.otn.infer.base import ImageInferenceRunner
     from pdebug.otn.infer.io_adapters import run_image_input
-    from pdebug.otn.inference import ImageInferenceRunner
     from pdebug.piata import ImageBatch
 
     captured = {}
@@ -510,7 +596,7 @@ def test_image_input_adapter_preserves_output_key_and_missing_output_message(
 
 
 def test_image_inference_runner_is_storage_agnostic():
-    from pdebug.otn.inference import ImageInferenceRunner
+    from pdebug.otn.infer.base import ImageInferenceRunner
 
     runner = ImageInferenceRunner(
         lambda image, *, index, unittest: {

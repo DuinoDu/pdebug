@@ -1,0 +1,41 @@
+{
+  "name": "depth_anything",
+  "task": "inference",
+  "description": "Infer depth-anything.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "depth_anything",
+    "module": "pdebug.otn.infer.depth_anything"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "image_path": {
+      "type": "str",
+      "default": "/mnt/c/Users/Admin/Pictures/dangdang1.jpg"
+    },
+    "output": {
+      "type": "str",
+      "default": "vis_depth.png"
+    },
+    "do_vis": {
+      "type": "bool",
+      "default": true
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

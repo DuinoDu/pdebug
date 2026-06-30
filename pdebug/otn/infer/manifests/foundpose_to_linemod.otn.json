@@ -1,0 +1,62 @@
+{
+  "name": "foundpose-to-linemod",
+  "task": "inference",
+  "description": "Convert FoundPose inference result to LineMOD format.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "foundpose_to_linemod",
+    "module": "pdebug.otn.infer.foundpose"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "pred_path": {
+      "type": "str"
+    },
+    "model_path": {
+      "type": "str"
+    },
+    "output_path": {
+      "type": "str",
+      "default": "tmp_linemod"
+    },
+    "category": {
+      "type": "str",
+      "default": "object"
+    },
+    "topk": {
+      "type": "int",
+      "default": -1
+    },
+    "save_depth": {
+      "type": "bool",
+      "default": false
+    },
+    "background_imgdir": {
+      "type": "str",
+      "default": "/mnt/d/github/data/VOCdevkit/VOC2012/JPEGImages"
+    },
+    "cache": {
+      "type": "bool",
+      "default": false
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

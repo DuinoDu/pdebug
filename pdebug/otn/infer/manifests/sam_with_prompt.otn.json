@@ -1,0 +1,44 @@
+{
+  "name": "sam_with_prompt",
+  "task": "inference",
+  "description": "SAM2 segmentation with gradio interface for prompt input.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "sam_with_prompt_main",
+    "module": "pdebug.otn.infer.sam2_node"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": "sam_prompt_output"
+    },
+    "port": {
+      "type": "int",
+      "default": 6150
+    },
+    "checkpoint": {
+      "type": "str",
+      "default": "large"
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

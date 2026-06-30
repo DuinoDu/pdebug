@@ -3,9 +3,8 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Dict, Optional, Union
 
-from pdebug.otn import manager as otn_manager
+from pdebug.otn.infer.base import ImageInferenceRunner
 from pdebug.otn.infer.io_adapters import run_image_input
-from pdebug.otn.inference import ImageInferenceRunner
 from pdebug.piata import (
     bbox_from_mask,
     compute_image_stats,
@@ -175,7 +174,6 @@ def _segment_anything_infer(
     }
 
 
-@otn_manager.NODE.register(name="segment_anything")
 def segment_anything_node(
     input_path: str,
     output: Optional[str] = None,

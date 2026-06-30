@@ -1,0 +1,62 @@
+{
+  "name": "hunyuan3d_paint",
+  "task": "inference",
+  "description": "Generate PBR textures for 3D meshes using Hunyuan3D-Paint model.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "hunyuan3d_paint_main",
+    "module": "pdebug.otn.infer.hunyuan3d_paint"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "repo": {
+      "type": "str"
+    },
+    "mesh_path": {
+      "type": "str"
+    },
+    "image_path": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": "tmp_hunyuan3d_paint"
+    },
+    "model_path": {
+      "type": "str",
+      "default": "tencent/Hunyuan3D-2.1"
+    },
+    "max_num_view": {
+      "type": "int",
+      "default": 6
+    },
+    "resolution": {
+      "type": "int",
+      "default": 512
+    },
+    "face_count": {
+      "type": "int",
+      "default": 40000
+    },
+    "cache": {
+      "type": "bool",
+      "default": true
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "name": "segment_anything",
+  "task": "inference",
+  "description": "Run Segment Anything over an image path or Lance dataset.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "segment_anything_node",
+    "module": "pdebug.otn.infer.segment_anything_node"
+  },
+  "schemas": {
+    "input": "ImageOrLanceRequest",
+    "output": "segment_anythingResult"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": null
+    },
+    "output_key": {
+      "type": "str",
+      "default": "cortexia_segmentation"
+    },
+    "unittest": {
+      "type": "bool",
+      "default": false
+    },
+    "lance_image_col": {
+      "type": "str",
+      "default": "camera_left"
+    },
+    "lance_kwargs": {
+      "type": "str",
+      "default": null
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": true,
+    "lance": true,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

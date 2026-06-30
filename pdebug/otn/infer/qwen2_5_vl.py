@@ -3,10 +3,10 @@ import re
 import tempfile
 import time
 from functools import lru_cache
+from importlib import import_module
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import (
     Input,
     compute_image_stats,
@@ -26,6 +26,23 @@ DEFAULT_IMAGE_PATH = (
     "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg"
 )
 DEFAULT_TEXT = "Describe the image."
+IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+
+
+def _qwen_attn_implementation() -> str:
+    if TORCH_INSTALLED and torch.cuda.is_available():
+        try:
+            import_module("flash_attn")
+        except Exception:
+            pass
+        else:
+            return "flash_attention_2"
+    if (
+        TORCH_INSTALLED
+        and hasattr(torch.nn.functional, "scaled_dot_product_attention")
+    ):
+        return "sdpa"
+    return "eager"
 
 
 def _dummy_tags(stats: Dict[str, float], index: int) -> Dict[str, object]:
@@ -57,7 +74,7 @@ def _load_qwen_model():
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         model_path,
         dtype=dtype,
-        attn_implementation="flash_attention_2",
+        attn_implementation=_qwen_attn_implementation(),
         device_map="auto",
     )
     processor = AutoProcessor.from_pretrained(model_path)
@@ -131,6 +148,43 @@ def _save_temp_image(image, target: Path) -> None:
         return
     bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     cv2.imwrite(str(target), bgr)
+
+
+def _read_first_visual_input(input_path: Path):
+    if input_path.is_dir():
+        reader = Input(str(input_path), name="imgdir").get_reader()
+        if len(reader) == 0:
+            raise RuntimeError("No RGB files found")
+        typer.echo(
+            typer.style(
+                f"Found {len(reader)} RGB files", fg=typer.colors.GREEN
+            )
+        )
+        return next(reader)
+
+    if input_path.is_file() and input_path.suffix.lower() in IMAGE_SUFFIXES:
+        reader = Input(str(input_path), name="image").get_reader()
+        typer.echo(
+            typer.style(
+                f"Found image file {input_path.name}",
+                fg=typer.colors.GREEN,
+            )
+        )
+        return next(reader)
+
+    if input_path.is_file():
+        reader = Input(str(input_path), name="video").get_reader()
+        frame_count = len(reader)
+        frame_count_text = str(frame_count) if frame_count >= 0 else "unknown"
+        typer.echo(
+            typer.style(
+                f"Found {frame_count_text} frames in video",
+                fg=typer.colors.GREEN,
+            )
+        )
+        return next(reader)
+
+    raise RuntimeError("No RGB files or video found")
 
 
 def _real_qwen_dataset_infer(
@@ -243,7 +297,6 @@ def lance_dataset_infer(
     return str(written)
 
 
-@otn_manager.NODE.register(name="qwen2_5_vl")
 def main(
     input_path: str = DEFAULT_IMAGE_PATH,
     text: str = DEFAULT_TEXT,
@@ -316,26 +369,7 @@ def main(
         print(output_text)
         return
 
-    if input_path.is_dir():
-        reader = Input(str(input_path), name="imgdir").get_reader()
-        if len(reader) == 0:
-            raise RuntimeError("No RGB files found")
-        typer.echo(
-            typer.style(
-                f"Found {len(reader)} RGB files", fg=typer.colors.GREEN
-            )
-        )
-    elif input_path.is_file():
-        reader = Input(str(input_path), name="video").get_reader()
-        typer.echo(
-            typer.style(
-                f"Found {len(reader)} frames in video", fg=typer.colors.GREEN
-            )
-        )
-    else:
-        raise RuntimeError("No RGB files or video found")
-
-    image = next(reader)
+    image = _read_first_visual_input(input_path)
     temp_dir = tempfile.TemporaryDirectory()
     image_file = os.path.join(temp_dir.name, "input.png")
     cv2.imwrite(image_file, image)

@@ -1,0 +1,69 @@
+{
+  "name": "internimage_semseg",
+  "task": "inference",
+  "description": "Inference of internimage-DCNv4 semseg.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "main",
+    "module": "pdebug.otn.infer.internimage_semseg"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str",
+      "default": null
+    },
+    "output": {
+      "type": "str",
+      "default": "tmp_semseg"
+    },
+    "vis_output": {
+      "type": "str",
+      "default": "tmp_semseg_vis"
+    },
+    "repo": {
+      "type": "str",
+      "default": null
+    },
+    "unittest": {
+      "type": "bool",
+      "default": false
+    },
+    "device": {
+      "type": "str",
+      "default": "cuda:0"
+    },
+    "cache": {
+      "type": "bool",
+      "default": true
+    },
+    "topk": {
+      "type": "int",
+      "default": -1
+    },
+    "savevideo": {
+      "type": "bool",
+      "default": false
+    },
+    "model_type": {
+      "type": "str",
+      "default": "small"
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

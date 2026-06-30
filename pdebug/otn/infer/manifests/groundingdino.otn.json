@@ -1,0 +1,52 @@
+{
+  "name": "groundingdino",
+  "task": "inference",
+  "description": "Run GroundingDINO over an image path or Lance dataset.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "groundingdino_node",
+    "module": "pdebug.otn.infer.groundingdino_node"
+  },
+  "schemas": {
+    "input": "ImageOrLanceRequest",
+    "output": "groundingdinoResult"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": null
+    },
+    "output_key": {
+      "type": "str",
+      "default": "cortexia_detection"
+    },
+    "unittest": {
+      "type": "bool",
+      "default": false
+    },
+    "lance_image_col": {
+      "type": "str",
+      "default": "camera_left"
+    },
+    "lance_kwargs": {
+      "type": "str",
+      "default": null
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": true,
+    "lance": true,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

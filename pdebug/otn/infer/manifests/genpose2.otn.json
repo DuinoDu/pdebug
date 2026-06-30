@@ -1,0 +1,133 @@
+{
+  "name": "genpose2",
+  "task": "inference",
+  "description": "GenPose2 model inference pipeline.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "main",
+    "module": "pdebug.otn.infer.genpose2"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "rgb_path": {
+      "type": "str",
+      "default": null
+    },
+    "depth_path": {
+      "type": "str",
+      "default": null
+    },
+    "mask_path": {
+      "type": "str",
+      "default": null
+    },
+    "sam6d_mask_path": {
+      "type": "str",
+      "default": null
+    },
+    "sam6d_camera_path": {
+      "type": "str",
+      "default": null
+    },
+    "vggt_camera_path": {
+      "type": "str",
+      "default": null
+    },
+    "meta_path": {
+      "type": "str",
+      "default": null
+    },
+    "repo": {
+      "type": "str",
+      "default": null
+    },
+    "output": {
+      "type": "str",
+      "default": "./genpose2_output"
+    },
+    "save_to_sam6d": {
+      "type": "bool",
+      "default": false
+    },
+    "vis_output": {
+      "type": "str",
+      "default": null
+    },
+    "vis_fps": {
+      "type": "int",
+      "default": 10
+    },
+    "tracking": {
+      "type": "bool",
+      "default": false
+    },
+    "tracking_t0": {
+      "type": "float",
+      "default": 0.15
+    },
+    "tracking_by_icp": {
+      "type": "bool",
+      "default": true
+    },
+    "score_model": {
+      "type": "str",
+      "default": "results/ckpts/ScoreNet/scorenet.pth"
+    },
+    "energy_model": {
+      "type": "str",
+      "default": "results/ckpts/EnergyNet/energynet.pth"
+    },
+    "scale_model": {
+      "type": "str",
+      "default": "results/ckpts/ScaleNet/scalenet.pth"
+    },
+    "topk": {
+      "type": "int",
+      "default": -1
+    },
+    "det_score_topk": {
+      "type": "int",
+      "default": 1
+    },
+    "skip_if_depth_not_exists": {
+      "type": "bool",
+      "default": false
+    },
+    "vis_rerun": {
+      "type": "bool",
+      "default": false
+    },
+    "rr_ip": {
+      "type": "str",
+      "default": null
+    },
+    "erode_on_mask": {
+      "type": "bool",
+      "default": false
+    },
+    "save_first_pointcloud": {
+      "type": "bool",
+      "default": false
+    },
+    "load_first_annotation": {
+      "type": "str",
+      "default": null
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

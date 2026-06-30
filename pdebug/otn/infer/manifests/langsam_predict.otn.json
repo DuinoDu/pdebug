@@ -1,0 +1,68 @@
+{
+  "name": "langsam_predict",
+  "task": "inference",
+  "description": "Language-guided SAM segmentation infer node.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "langsam_predict",
+    "module": "pdebug.otn.infer.langsam"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": null
+    },
+    "texts": {
+      "type": "str",
+      "default": null
+    },
+    "sam_type": {
+      "type": "str",
+      "default": "sam2.1_hiera_small"
+    },
+    "ckpt_path": {
+      "type": "str",
+      "default": null
+    },
+    "device": {
+      "type": "str",
+      "default": "cuda"
+    },
+    "box_threshold": {
+      "type": "float",
+      "default": 0.3
+    },
+    "text_threshold": {
+      "type": "float",
+      "default": 0.25
+    },
+    "topk": {
+      "type": "int",
+      "default": -1
+    },
+    "cache": {
+      "type": "bool",
+      "default": true
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

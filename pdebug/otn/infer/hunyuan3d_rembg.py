@@ -5,13 +5,13 @@ Depends:
     torch, torchvision, PIL
 """
 import json
+import importlib.util
 import os
 import shutil
 import sys
 from pathlib import Path
 from typing import List, Optional
 
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input, Output
 from pdebug.visp import draw
 
@@ -20,7 +20,26 @@ import typer
 from PIL import Image
 
 
-@otn_manager.NODE.register(name="hunyuan3d_rembg")
+def _load_background_remover(repo: Path):
+    """Load the official rembg module without importing all hy3dshape."""
+    rembg_path = repo / "hy3dshape" / "hy3dshape" / "rembg.py"
+    if not rembg_path.exists():
+        sys.path.insert(0, str(repo / "hy3dshape"))
+        from hy3dshape.rembg import BackgroundRemover
+
+        return BackgroundRemover
+
+    spec = importlib.util.spec_from_file_location(
+        "_pdebug_hunyuan3d_rembg", rembg_path
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot import Hunyuan3D rembg from {rembg_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module.BackgroundRemover
+
+
 def hunyuan3d_rembg_main(
     repo: str,
     input_path: str,
@@ -53,9 +72,7 @@ def hunyuan3d_rembg_main(
         return str(output)
 
     try:
-        # Add repo to Python path
-        sys.path.insert(0, str(repo / "hy3dshape"))
-        from hy3dshape.rembg import BackgroundRemover
+        BackgroundRemover = _load_background_remover(repo)
     except ImportError as e:
         raise ImportError(
             f"Failed to import Hunyuan3D background remover: {e}"

@@ -1,0 +1,69 @@
+{
+  "name": "orient_anything",
+  "task": "inference",
+  "description": "Inference of Orient Anything.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "main",
+    "module": "pdebug.otn.infer.orient_anything"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str",
+      "default": null
+    },
+    "output": {
+      "type": "str",
+      "default": "tmp_orient"
+    },
+    "vis_output": {
+      "type": "str",
+      "default": "tmp_orient_vis"
+    },
+    "repo": {
+      "type": "str",
+      "default": null
+    },
+    "unittest": {
+      "type": "bool",
+      "default": false
+    },
+    "cache": {
+      "type": "bool",
+      "default": true
+    },
+    "topk": {
+      "type": "int",
+      "default": -1
+    },
+    "do_rm_bkg": {
+      "type": "bool",
+      "default": false
+    },
+    "do_infer_aug": {
+      "type": "bool",
+      "default": false
+    },
+    "device": {
+      "type": "str",
+      "default": "cuda:0"
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

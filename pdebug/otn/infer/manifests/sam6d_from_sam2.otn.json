@@ -1,0 +1,35 @@
+{
+  "name": "sam6d-from-sam2",
+  "task": "inference",
+  "description": "Convert sam2 result to seg json in sam6d.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "from_sam2",
+    "module": "pdebug.otn.infer.sam6d"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "output_path": {
+      "type": "str"
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

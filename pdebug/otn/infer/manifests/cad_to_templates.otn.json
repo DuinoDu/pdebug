@@ -1,0 +1,73 @@
+{
+  "name": "cad-to-templates",
+  "task": "inference",
+  "description": "Reneder images (color, mask, depth) around object.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "cad_to_templates",
+    "module": "pdebug.otn.infer.foundpose"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "model_path": {
+      "type": "str",
+      "default": null
+    },
+    "output_dir": {
+      "type": "str",
+      "default": "tmp_rendering_output"
+    },
+    "crop": {
+      "type": "bool",
+      "default": false
+    },
+    "num_viewspheres": {
+      "type": "int",
+      "default": 1
+    },
+    "min_num_viewpoints": {
+      "type": "int",
+      "default": 57
+    },
+    "num_inplane_rotations": {
+      "type": "int",
+      "default": 14
+    },
+    "min_depth": {
+      "type": "float",
+      "default": 346.31
+    },
+    "max_depth": {
+      "type": "float",
+      "default": 1499.84
+    },
+    "azimuth_range": {
+      "type": "str",
+      "default": "(0, 2 * math.pi)"
+    },
+    "elev_range": {
+      "type": "str",
+      "default": "(-0.5 * math.pi, 0.5 * math.pi)"
+    },
+    "topk": {
+      "type": "int",
+      "default": -1
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

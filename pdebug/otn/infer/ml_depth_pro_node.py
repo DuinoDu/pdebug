@@ -3,9 +3,8 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Dict, Optional, Union
 
-from pdebug.otn import manager as otn_manager
+from pdebug.otn.infer.base import ImageInferenceRunner
 from pdebug.otn.infer.io_adapters import run_image_input
-from pdebug.otn.inference import ImageInferenceRunner
 from pdebug.piata import compute_image_stats, depth_stub, encode_depth_map
 from pdebug.utils.env import TORCH_INSTALLED
 
@@ -165,7 +164,6 @@ def _depth_infer(
     return depth
 
 
-@otn_manager.NODE.register(name="ml_depth_pro")
 def ml_depth_pro_node(
     input_path: str,
     output: Optional[str] = None,

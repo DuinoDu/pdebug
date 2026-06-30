@@ -5,22 +5,223 @@ Depends:
     torch, torchvision, diffusers, transformers, trimesh
 """
 import json
+import importlib.util
 import os
+import shlex
 import shutil
+import subprocess
 import sys
+import sysconfig
+import types
 from pathlib import Path
 from typing import List, Optional
 
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input, Output
 from pdebug.visp import draw
 
-import numpy as np
 import typer
 from PIL import Image
 
 
-@otn_manager.NODE.register(name="hunyuan3d_paint")
+def _prepend_sys_paths(paths: List[Path]) -> None:
+    """Put repo-local imports ahead of installed packages deterministically."""
+    for path in reversed(paths):
+        path_str = str(path)
+        if path_str in sys.path:
+            sys.path.remove(path_str)
+        sys.path.insert(0, path_str)
+
+
+def _build_custom_rasterizer(extension_root: Path) -> None:
+    env = os.environ.copy()
+    env.setdefault("MAX_JOBS", "4")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-build-isolation",
+            "-e",
+            str(extension_root),
+        ],
+        cwd=extension_root,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Failed to build Hunyuan3D custom_rasterizer extension with "
+            f"{sys.executable}:\n{result.stdout}"
+        )
+
+
+def _ensure_custom_rasterizer(repo: Path) -> None:
+    """Import the official repo-local rasterizer package, not its namespace dir."""
+    extension_root = repo / "hy3dpaint" / "custom_rasterizer"
+    _prepend_sys_paths([extension_root])
+
+    module = sys.modules.get("custom_rasterizer")
+    if module is not None and not hasattr(module, "rasterize"):
+        sys.modules.pop("custom_rasterizer", None)
+
+    try:
+        import custom_rasterizer as cr
+    except ModuleNotFoundError as exc:
+        if exc.name != "custom_rasterizer_kernel":
+            raise
+        _build_custom_rasterizer(extension_root)
+        importlib.invalidate_caches()
+        sys.modules.pop("custom_rasterizer", None)
+        import custom_rasterizer as cr
+
+    if not all(hasattr(cr, name) for name in ("rasterize", "interpolate")):
+        module_file = getattr(cr, "__file__", "<namespace package>")
+        sys.modules.pop("custom_rasterizer", None)
+        raise ImportError(
+            "Imported an invalid custom_rasterizer module from "
+            f"{module_file}; expected repo-local rasterize/interpolate APIs."
+        )
+
+
+def _build_mesh_inpaint_processor(extension_root: Path) -> None:
+    includes = subprocess.run(
+        [sys.executable, "-m", "pybind11", "--includes"],
+        cwd=extension_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if includes.returncode != 0:
+        raise RuntimeError(
+            "Failed to query pybind11 include paths for Hunyuan3D "
+            f"mesh_inpaint_processor:\n{includes.stdout}"
+        )
+
+    suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
+    result = subprocess.run(
+        [
+            "c++",
+            "-O3",
+            "-Wall",
+            "-shared",
+            "-std=c++11",
+            "-fPIC",
+            *shlex.split(includes.stdout.strip()),
+            "mesh_inpaint_processor.cpp",
+            "-o",
+            f"mesh_inpaint_processor{suffix}",
+        ],
+        cwd=extension_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Failed to build Hunyuan3D mesh_inpaint_processor extension "
+            f"with {sys.executable}:\n{result.stdout}"
+        )
+
+
+def _ensure_mesh_inpaint_processor(repo: Path) -> None:
+    """Compile and import the official pybind mesh inpaint extension."""
+    module_name = "DifferentiableRenderer.mesh_inpaint_processor"
+    extension_root = repo / "hy3dpaint" / "DifferentiableRenderer"
+
+    package = sys.modules.setdefault(
+        "DifferentiableRenderer", types.ModuleType("DifferentiableRenderer")
+    )
+    package.__path__ = [str(extension_root)]
+
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError:
+        _build_mesh_inpaint_processor(extension_root)
+        importlib.invalidate_caches()
+        sys.modules.pop(module_name, None)
+        module = importlib.import_module(module_name)
+
+    if not hasattr(module, "meshVerticeInpaint"):
+        module_file = getattr(module, "__file__", "<unknown>")
+        raise ImportError(
+            "Imported an invalid mesh_inpaint_processor module from "
+            f"{module_file}; expected meshVerticeInpaint."
+        )
+
+
+def _install_mesh_utils_without_bpy(repo: Path) -> None:
+    """Load official mesh IO helpers while skipping Blender-only conversion."""
+    module_name = "DifferentiableRenderer.mesh_utils"
+    if module_name in sys.modules:
+        return
+
+    mesh_utils_path = (
+        repo / "hy3dpaint" / "DifferentiableRenderer" / "mesh_utils.py"
+    )
+    source = mesh_utils_path.read_text(encoding="utf-8")
+    source = source.replace("import bpy\n", "")
+    cutoff = source.find("\ndef _setup_blender_scene")
+    if cutoff != -1:
+        source = source[:cutoff]
+    source += (
+        "\n\ndef convert_obj_to_glb(obj_path, glb_path, *args, **kwargs):\n"
+        "    return False\n"
+    )
+
+    package = sys.modules.setdefault(
+        "DifferentiableRenderer", types.ModuleType("DifferentiableRenderer")
+    )
+    package.__path__ = [str(repo / "hy3dpaint" / "DifferentiableRenderer")]
+    spec = importlib.util.spec_from_loader(module_name, loader=None)
+    module = importlib.util.module_from_spec(spec)
+    module.__file__ = str(mesh_utils_path)
+    sys.modules[module_name] = module
+    exec(compile(source, str(mesh_utils_path), "exec"), module.__dict__)
+
+
+def _install_torchvision_compat() -> None:
+    """Provide the legacy module path imported by BasicSR."""
+    module_name = "torchvision.transforms.functional_tensor"
+    if module_name in sys.modules:
+        return
+    try:
+        import torchvision.transforms.functional as functional
+    except ImportError:
+        return
+    sys.modules[module_name] = functional
+
+
+def _apply_low_memory_config(config, face_count: int, resolution: int) -> dict:
+    """Scale official paint internals down for tiny integration meshes."""
+    effective = {
+        "resolution": resolution,
+        "render_size": config.render_size,
+        "texture_size": config.texture_size,
+        "max_num_view": config.max_selected_view_num,
+    }
+    if face_count > 1000:
+        return effective
+
+    config.resolution = min(resolution, 256)
+    config.render_size = min(config.render_size, 512)
+    config.texture_size = min(config.texture_size, 1024)
+    effective.update(
+        {
+            "resolution": config.resolution,
+            "render_size": config.render_size,
+            "texture_size": config.texture_size,
+            "max_num_view": config.max_selected_view_num,
+        }
+    )
+    return effective
+
+
 def hunyuan3d_paint_main(
     repo: str,
     mesh_path: str,
@@ -62,8 +263,18 @@ def hunyuan3d_paint_main(
         return str(output)
 
     try:
-        # Add repo to Python path
-        sys.path.insert(0, str(repo))
+        # Add repo paths expected by the official paint scripts.
+        _prepend_sys_paths(
+            [
+                repo / "hy3dpaint" / "custom_rasterizer",
+                repo,
+                repo / "hy3dpaint",
+            ]
+        )
+        _ensure_custom_rasterizer(repo)
+        _install_mesh_utils_without_bpy(repo)
+        _ensure_mesh_inpaint_processor(repo)
+        _install_torchvision_compat()
         from hy3dpaint.textureGenPipeline import (
             Hunyuan3DPaintConfig,
             Hunyuan3DPaintPipeline,
@@ -77,6 +288,9 @@ def hunyuan3d_paint_main(
     # Configure pipeline
     config = Hunyuan3DPaintConfig(
         max_num_view=max_num_view, resolution=resolution
+    )
+    effective_parameters = _apply_low_memory_config(
+        config, face_count, resolution
     )
     config.realesrgan_ckpt_path = str(
         repo / "hy3dpaint" / "ckpt" / "RealESRGAN_x4plus.pth"
@@ -130,14 +344,17 @@ def hunyuan3d_paint_main(
         # Load reference image
         reference_image = Image.open(img_file).convert("RGB")
 
-        # Generate texture
-        output_mesh_path = output / f"{mesh_file.stem}_textured.glb"
+        # The official paint pipeline writes OBJ first and can export GLB.
+        output_mesh_path = output / f"{mesh_file.stem}_textured.obj"
         textured_mesh_path = paint_pipeline(
             mesh_path=str(mesh_file),
             image_path=str(img_file),
             output_mesh_path=str(output_mesh_path),
-            face_count=face_count,
         )
+        textured_mesh_path = Path(textured_mesh_path)
+        output_glb_path = textured_mesh_path.with_suffix(".glb")
+        if output_glb_path.exists():
+            textured_mesh_path = output_glb_path
 
         results.append(
             {
@@ -149,6 +366,7 @@ def hunyuan3d_paint_main(
                     "resolution": resolution,
                     "face_count": face_count,
                 },
+                "effective_parameters": effective_parameters,
             }
         )
 

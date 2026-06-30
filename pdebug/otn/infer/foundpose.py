@@ -47,7 +47,6 @@ import os
 import shutil
 from pathlib import Path
 
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input
 from pdebug.piata.coco.utils import binary_mask_to_bbox
 from pdebug.utils.ddd import get_3D_corners, load_points_3d_from_cad
@@ -3070,7 +3069,6 @@ class GenTemplatesOpts(NamedTuple):
     debug: bool = True
 
 
-@otn_manager.NODE.register(name="cad-to-templates")
 def cad_to_templates(
     model_path: str = None,
     output_dir: str = "tmp_rendering_output",
@@ -3530,7 +3528,6 @@ def calc_pts_diameter(pts):
     return diameter
 
 
-@otn_manager.NODE.register(name="templates-to-linemod")
 def templates_to_linemod(
     input_path: str,
     output_path: str,
@@ -3925,7 +3922,6 @@ def get_instances_for_pose_estimation(root: str, rgb_file: str):
     return insts
 
 
-@otn_manager.NODE.register(name="foundpose-to-linemod")
 def foundpose_to_linemod(
     input_path: str,
     pred_path: str,

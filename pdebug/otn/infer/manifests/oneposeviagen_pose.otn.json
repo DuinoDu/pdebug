@@ -1,0 +1,72 @@
+{
+  "name": "oneposeviagen_pose",
+  "task": "inference",
+  "description": "Pose estimation for OnePoseviaGen pipeline using FoundationPose.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "main",
+    "module": "pdebug.otn.infer.oneposeviagen_pose"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "rgb_path": {
+      "type": "str"
+    },
+    "depth_path": {
+      "type": "str"
+    },
+    "masks_path": {
+      "type": "str"
+    },
+    "model_path": {
+      "type": "str"
+    },
+    "repo": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": "pose_estimation"
+    },
+    "intrinsics_path": {
+      "type": "str",
+      "default": null
+    },
+    "debug": {
+      "type": "int",
+      "default": 0
+    },
+    "est_refine_iter": {
+      "type": "int",
+      "default": 5
+    },
+    "track_refine_iter": {
+      "type": "int",
+      "default": 2
+    },
+    "init_min_views": {
+      "type": "int",
+      "default": 20
+    },
+    "init_inplane_step": {
+      "type": "int",
+      "default": 90
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

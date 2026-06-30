@@ -18,7 +18,12 @@ def imgdir2video(
         print("`imgdir2video` need `moviepy`, please install by pip.")
         raise e
 
-    from moviepy.editor import ImageClip, concatenate
+    try:
+        from moviepy.editor import ImageClip, concatenate
+    except ModuleNotFoundError:
+        from moviepy import ImageClip, concatenate_videoclips
+
+        concatenate = concatenate_videoclips
 
     imgfiles = sorted(
         [os.path.join(imgdir, x) for x in sorted(os.listdir(imgdir))]
@@ -28,7 +33,12 @@ def imgdir2video(
 
     clips = []
     for imgfile in imgfiles:
-        clips.append(ImageClip(imgfile).set_duration(1))
+        clip = ImageClip(imgfile)
+        if hasattr(clip, "set_duration"):
+            clip = clip.set_duration(1)
+        else:
+            clip = clip.with_duration(1)
+        clips.append(clip)
 
     video = concatenate(clips, method="compose")
     video.write_videofile(output, fps=fps)

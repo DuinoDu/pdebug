@@ -1,0 +1,79 @@
+{
+  "name": "spatracker",
+  "task": "inference",
+  "description": "SpatialTrackerV2 tracking for OnePoseviaGen pipeline.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "main",
+    "module": "pdebug.otn.infer.spatracker"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "repo": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": "tracking_results"
+    },
+    "vis_output": {
+      "type": "str",
+      "default": null
+    },
+    "mask_path": {
+      "type": "str",
+      "default": null
+    },
+    "fps": {
+      "type": "int",
+      "default": 1
+    },
+    "max_frames": {
+      "type": "int",
+      "default": null
+    },
+    "model_input_size": {
+      "type": "int",
+      "default": 30
+    },
+    "grid_size": {
+      "type": "int",
+      "default": 50
+    },
+    "topk": {
+      "type": "int",
+      "default": -1
+    },
+    "cache": {
+      "type": "bool",
+      "default": true
+    },
+    "vis_rerun": {
+      "type": "bool",
+      "default": false
+    },
+    "rr_ip": {
+      "type": "str",
+      "default": null
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "name": "oneposeviagen_scale",
+  "task": "inference",
+  "description": "Scale recovery for OnePoseviaGen pipeline.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "main",
+    "module": "pdebug.otn.infer.oneposeviagen_scale"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "model_path": {
+      "type": "str"
+    },
+    "depth_path": {
+      "type": "str"
+    },
+    "rgb_path": {
+      "type": "str"
+    },
+    "masks_path": {
+      "type": "str"
+    },
+    "repo": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": "scaled_model"
+    },
+    "intrinsics_path": {
+      "type": "str",
+      "default": null
+    },
+    "refine_iterations": {
+      "type": "int",
+      "default": 3
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

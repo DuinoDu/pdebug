@@ -1,0 +1,68 @@
+{
+  "name": "sam6d-to-linemod",
+  "task": "inference",
+  "description": "Convert sam6d output to linemod format.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "to_linemod",
+    "module": "pdebug.otn.infer.sam6d"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "path": {
+      "type": "str"
+    },
+    "rgb": {
+      "type": "str"
+    },
+    "cad": {
+      "type": "str"
+    },
+    "camera": {
+      "type": "str"
+    },
+    "category": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": "tmp_linemod"
+    },
+    "max_train_num": {
+      "type": "int",
+      "default": 200
+    },
+    "seg_score_thresh": {
+      "type": "float",
+      "default": 0.5
+    },
+    "max_det_num": {
+      "type": "int",
+      "default": -1
+    },
+    "background_imgdir": {
+      "type": "str",
+      "default": null
+    },
+    "align_to_world": {
+      "type": "bool",
+      "default": false
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

@@ -6,11 +6,11 @@ import json
 import os
 import shutil
 import sys
+import types
 from pathlib import Path
 from typing import Optional
 
 from pdebug.data_types import Camera
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input, Output
 from pdebug.utils.env import TORCH_INSTALLED
 from pdebug.utils.fileio import do_system
@@ -26,7 +26,21 @@ if TORCH_INSTALLED:
     import torchvision.transforms as T
 
 
-@otn_manager.NODE.register(name="spatracker")
+def _install_moviepy_editor_shim() -> None:
+    """Expose moviepy.editor for SpaTrackerV2 with moviepy>=2."""
+    if "moviepy.editor" in sys.modules:
+        return
+    try:
+        import moviepy
+    except Exception:
+        return
+    if not hasattr(moviepy, "ImageSequenceClip"):
+        return
+    editor = types.ModuleType("moviepy.editor")
+    editor.ImageSequenceClip = moviepy.ImageSequenceClip
+    sys.modules["moviepy.editor"] = editor
+
+
 def main(
     input_path: str,
     repo: str,
@@ -68,6 +82,7 @@ def main(
 
     if not repo.exists():
         raise RuntimeError(f"SpaTrackerV2 repository not found at {repo}")
+    _install_moviepy_editor_shim()
     sys.path.insert(0, str(repo))
     from models.SpaTrackV2.models.predictor import Predictor
     from models.SpaTrackV2.models.vggt4track.models.vggt_moe import VGGT4Track
@@ -135,7 +150,9 @@ def main(
         print(f"{output} exists, skip")
         return
 
-    dummy_frames_len = model_input_size - len(frames) % model_input_size
+    dummy_frames_len = (
+        model_input_size - len(frames) % model_input_size
+    ) % model_input_size
     if dummy_frames_len:
         dummy_frames = [
             np.zeros_like(frames[-1]) for _ in range(dummy_frames_len)

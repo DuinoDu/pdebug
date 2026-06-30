@@ -1,0 +1,61 @@
+{
+  "name": "remove_dynamic",
+  "task": "inference",
+  "description": "Mask out rgb region based on mask file.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "remove_dynamic",
+    "module": "pdebug.otn.infer.internimage_semseg"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str",
+      "default": null
+    },
+    "mask_path": {
+      "type": "str",
+      "default": null
+    },
+    "output": {
+      "type": "str",
+      "default": "tmp_semseg"
+    },
+    "remove_ade_names": {
+      "type": "str",
+      "default": "person,car"
+    },
+    "remove_mask_idx": {
+      "type": "str",
+      "default": null
+    },
+    "cache": {
+      "type": "bool",
+      "default": true
+    },
+    "topk": {
+      "type": "int",
+      "default": -1
+    },
+    "downsample": {
+      "type": "int",
+      "default": null
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

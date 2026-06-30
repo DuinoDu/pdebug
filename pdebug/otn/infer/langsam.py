@@ -2,8 +2,8 @@ import json
 import os
 import shutil
 from pathlib import Path
+from typing import get_type_hints
 
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input
 from pdebug.utils.fileio import save_json
 from pdebug.visp import draw
@@ -17,14 +17,57 @@ from PIL import Image
 
 def installed():
     try:
-        import langsam_sam
+        import lang_sam
 
         return True
-    except ModuleNotFoundError as e:
+    except ModuleNotFoundError:
         return False
 
 
-@otn_manager.NODE.register(name="langsam_sam")
+def _load_langsam():
+    """Load LangSAM from the official lang-segment-anything package."""
+    try:
+        from lang_sam import LangSAM
+
+        return LangSAM
+    except ImportError:
+        try:
+            from lang_sam.lang_sam import LangSAM
+
+            return LangSAM
+        except ImportError as e:
+            raise ImportError(
+                "Failed to import LangSAM. Install the official package with "
+                "`.venv/bin/python -m pip install -U "
+                "git+https://github.com/luca-medeiros/"
+                "lang-segment-anything.git`. If git clone is unavailable, "
+                "install the matching GitHub archive with `--no-deps` and "
+                "then install the package dependencies."
+            ) from e
+
+
+def _build_langsam_model(
+    LangSAM,
+    *,
+    sam_type: str,
+    ckpt_path: str = None,
+    device: str = "cuda",
+):
+    """Build LangSAM across official and older fork constructor variants."""
+    try:
+        annotations = get_type_hints(LangSAM.__init__)
+    except Exception:
+        annotations = getattr(LangSAM.__init__, "__annotations__", {})
+    params = getattr(LangSAM.__init__, "__code__", None)
+    names = set(params.co_varnames[: params.co_argcount]) if params else set()
+    kwargs = {"sam_type": sam_type, "device": device}
+    if "sam_ckpt_path" in names or "sam_ckpt_path" in annotations:
+        kwargs["sam_ckpt_path"] = ckpt_path
+    else:
+        kwargs["ckpt_path"] = ckpt_path
+    return LangSAM(**kwargs)
+
+
 def langsam_sam(
     input_path: str,
     output: str = None,
@@ -100,13 +143,15 @@ def langsam_sam(
             mask_dir = output / "masks"
             mask_dir.mkdir(exist_ok=True)
 
+            rgb_file = reader.filename
+            base_name = Path(rgb_file).stem
             results = []
             for mask_idx, mask_info in enumerate(masks):
                 mask = mask_info["segmentation"]
                 mask_img = (mask * 255).astype(np.uint8)
 
                 mask_file = (
-                    mask_dir / f"{Path(rgb_file).stem}_mask_{mask_idx:03d}.png"
+                    mask_dir / f"{base_name}_mask_{mask_idx:03d}.png"
                 )
                 cv2.imwrite(str(mask_file), mask_img)
 
@@ -121,7 +166,7 @@ def langsam_sam(
                 results.append(mask_data)
 
             # Save metadata
-            meta_file = output / "metadata" / f"{Path(rgb_file).stem}.json"
+            meta_file = output / "metadata" / f"{base_name}.json"
             meta_file.parent.mkdir(exist_ok=True)
             save_json(results, meta_file)
 
@@ -131,7 +176,6 @@ def langsam_sam(
     typer.echo(f"Results saved to {output}")
 
 
-@otn_manager.NODE.register(name="langsam_predict")
 def langsam_predict(
     input_path: str,
     output: str = None,
@@ -164,12 +208,7 @@ def langsam_predict(
     output.mkdir(exist_ok=True, parents=True)
     input_path = Path(input_path)
 
-    try:
-        from lang_sam.lang_sam import LangSAM
-    except ImportError as e:
-        raise ImportError(
-            f"Failed to import lang_sam from {repo_path}: {e}, install lang_sam first."
-        )
+    LangSAM = _load_langsam()
 
     # Parse text prompts
     if not texts:
@@ -224,7 +263,12 @@ def langsam_predict(
         return
 
     # Initialize LangSAM model
-    lang_sam = LangSAM(sam_type=sam_type, ckpt_path=ckpt_path, device=device)
+    lang_sam = _build_langsam_model(
+        LangSAM,
+        sam_type=sam_type,
+        ckpt_path=ckpt_path,
+        device=device,
+    )
 
     # Process each image
     t = tqdm.tqdm(total=len(reader))
@@ -323,7 +367,6 @@ def crop_to_mask(image, mask, margin=0):
     return image[y_min:y_max, x_min:x_max], mask[y_min:y_max, x_min:x_max]
 
 
-@otn_manager.NODE.register(name="langsam_for_aigc")
 def langsam_for_aigc(
     input_path=None,
     text="cube",

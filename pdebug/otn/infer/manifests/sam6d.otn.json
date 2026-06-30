@@ -1,0 +1,60 @@
+{
+  "name": "sam6d",
+  "task": "inference",
+  "description": "Sam6d auto annotation pipeline.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "main",
+    "module": "pdebug.otn.infer.sam6d"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "rgb_path": {
+      "type": "str"
+    },
+    "depth_path": {
+      "type": "str"
+    },
+    "cad_path": {
+      "type": "str"
+    },
+    "camera_path": {
+      "type": "str"
+    },
+    "repo": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": null
+    },
+    "cache": {
+      "type": "bool",
+      "default": true
+    },
+    "skip_pose": {
+      "type": "bool",
+      "default": false
+    },
+    "seg_first_frame": {
+      "type": "bool",
+      "default": false
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

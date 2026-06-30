@@ -1,0 +1,45 @@
+{
+  "name": "foundpose_subprocess",
+  "task": "pose_estimation",
+  "description": "Run FoundPose through an external subprocess that reads and writes OTN JSON request files.",
+  "backend": {
+    "type": "subprocess",
+    "command": ["python", "-m", "foundpose_infer"],
+    "timeout_sec": 1800
+  },
+  "schemas": {
+    "input": {
+      "type": "object",
+      "required": ["rgb_path", "mask_path", "cad_path", "camera_path"],
+      "properties": {
+        "rgb_path": {"type": "string"},
+        "mask_path": {"type": "string"},
+        "cad_path": {"type": "string"},
+        "camera_path": {"type": "string"}
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["poses"],
+      "properties": {
+        "poses": {"type": "array"}
+      }
+    }
+  },
+  "parameters": {
+    "rgb_path": {"type": "str"},
+    "mask_path": {"type": "str"},
+    "cad_path": {"type": "str"},
+    "camera_path": {"type": "str"},
+    "output": {"type": "str", "default": null}
+  },
+  "dependencies": {
+    "runtime": "python subprocess",
+    "external_module": "foundpose_infer"
+  },
+  "capabilities": {
+    "batch": true,
+    "lance": false,
+    "devices": ["cpu", "cuda"]
+  }
+}

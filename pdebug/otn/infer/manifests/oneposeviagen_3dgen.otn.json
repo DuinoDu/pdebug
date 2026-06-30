@@ -1,0 +1,90 @@
+{
+  "name": "oneposeviagen_3dgen",
+  "task": "inference",
+  "description": "3D model generation for OnePoseviaGen pipeline.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "main",
+    "module": "pdebug.otn.infer.oneposeviagen_3dgen"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "rgb_path": {
+      "type": "str"
+    },
+    "masks_path": {
+      "type": "str"
+    },
+    "repo": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": "3d_model"
+    },
+    "seed": {
+      "type": "int",
+      "default": 42
+    },
+    "randomize_seed": {
+      "type": "bool",
+      "default": true
+    },
+    "ss_guidance_strength": {
+      "type": "float",
+      "default": 7.5
+    },
+    "ss_sampling_steps": {
+      "type": "int",
+      "default": 12
+    },
+    "slat_guidance_strength": {
+      "type": "float",
+      "default": 15.0
+    },
+    "slat_sampling_steps": {
+      "type": "int",
+      "default": 25
+    },
+    "is_occluded": {
+      "type": "bool",
+      "default": false
+    },
+    "model_type": {
+      "type": "str",
+      "default": "hi3dgen"
+    },
+    "preview_resolution": {
+      "type": "int",
+      "default": 1024
+    },
+    "preview_num_frames": {
+      "type": "int",
+      "default": 120
+    },
+    "preview_fps": {
+      "type": "int",
+      "default": 15
+    },
+    "generate_gaussian": {
+      "type": "bool",
+      "default": true
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "name": "langsam_sam",
+  "task": "inference",
+  "description": "SAM segmentation infer node.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "langsam_sam",
+    "module": "pdebug.otn.infer.langsam"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": null
+    },
+    "sam_type": {
+      "type": "str",
+      "default": "sam2.1_hiera_small"
+    },
+    "ckpt_path": {
+      "type": "str",
+      "default": null
+    },
+    "device": {
+      "type": "str",
+      "default": "cuda"
+    },
+    "use_auto_mask": {
+      "type": "bool",
+      "default": false
+    },
+    "topk": {
+      "type": "int",
+      "default": -1
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

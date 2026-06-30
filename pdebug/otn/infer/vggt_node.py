@@ -4,10 +4,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from pdebug.otn import manager as otn_manager
 from pdebug.utils.env import TORCH_INSTALLED, VGGT_INSTALLED, VISER_INSTALLED
 from pdebug.utils.fileio import do_system
-from pdebug.visp import draw
 
 import cv2
 import numpy as np
@@ -18,19 +16,10 @@ if TORCH_INSTALLED:
     import torch.nn.functional as F
 
 if VGGT_INSTALLED:
-    from vggt.dependency.np_to_pycolmap import (
-        batch_np_matrix_to_pycolmap,
-        batch_np_matrix_to_pycolmap_wo_track,
-    )
-    from vggt.dependency.track_predict import predict_tracks
     from vggt.models.vggt import VGGT
     from vggt.utils.geometry import (
         closed_form_inverse_se3,
         unproject_depth_map_to_point_map,
-    )
-    from vggt.utils.helper import (
-        create_pixel_coordinate_grid,
-        randomly_limit_trues,
     )
     from vggt.utils.load_fn import load_and_preprocess_images_square
     from vggt.utils.pose_enc import pose_encoding_to_extri_intri
@@ -40,7 +29,6 @@ if VISER_INSTALLED:
     import viser.transforms as viser_tf
 
 
-@otn_manager.NODE.register(name="vggt")
 def vggt_main(
     input_path: str = None,
     output: str = "vggt_output",
@@ -160,6 +148,11 @@ def vggt_main(
 
     # Bundle adjustment if requested
     if use_ba:
+        from vggt.dependency.np_to_pycolmap import (
+            batch_np_matrix_to_pycolmap,
+        )
+        from vggt.dependency.track_predict import predict_tracks
+
         image_size = np.array(images.shape[-2:])
         scale = img_load_resolution / vggt_fixed_resolution
 
@@ -212,6 +205,14 @@ def vggt_main(
             sparse_dir.mkdir(exist_ok=True)
             reconstruction.write(str(sparse_dir))
     elif save_colmap:
+        from vggt.dependency.np_to_pycolmap import (
+            batch_np_matrix_to_pycolmap_wo_track,
+        )
+        from vggt.utils.helper import (
+            create_pixel_coordinate_grid,
+            randomly_limit_trues,
+        )
+
         max_points_for_colmap = 100000
         image_size = np.array([vggt_fixed_resolution, vggt_fixed_resolution])
         num_frames, height, width, _ = points_3d.shape
@@ -252,7 +253,6 @@ def vggt_main(
     return str(output)
 
 
-@otn_manager.NODE.register(name="vggt-viser")
 def vggt_viser(
     input_path: str,
     port: int = 6150,

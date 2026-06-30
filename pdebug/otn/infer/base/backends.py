@@ -1,9 +1,11 @@
 """Inference backend adapters."""
 from __future__ import annotations
 import importlib
+import importlib.util
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.request
 from abc import ABC, abstractmethod
@@ -48,9 +50,13 @@ class LocalPythonBackend(InferenceBackend):
             return self._target
 
         module_name = self.spec.config.get("module")
-        if not module_name:
-            raise ValueError("local_python backend requires module")
-        module = importlib.import_module(str(module_name))
+        module_file = self.spec.config.get("file")
+        if module_file:
+            module = self._load_module_from_file(str(module_file))
+        elif module_name:
+            module = importlib.import_module(str(module_name))
+        else:
+            raise ValueError("local_python backend requires module or file")
 
         if "class" in self.spec.config:
             cls = getattr(module, str(self.spec.config["class"]))
@@ -61,6 +67,32 @@ class LocalPythonBackend(InferenceBackend):
         else:
             raise ValueError("local_python backend requires class or function")
         return self._target
+
+    def _load_module_from_file(self, module_file: str):
+        path = Path(module_file)
+        if not path.is_absolute():
+            manifest_path = self.spec.config.get("_manifest_path")
+            base_dir = (
+                Path(str(manifest_path)).parent
+                if manifest_path
+                else Path.cwd()
+            )
+            path = base_dir / path
+        path = path.resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"backend file not found: {path}")
+
+        module_name = self.spec.config.get("module")
+        if not module_name:
+            module_name = f"_otn_manifest_{path.stem.replace('-', '_')}"
+        module_name = str(module_name)
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot import backend file: {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
 
     def predict(self, request: InferenceRequest) -> InferenceResult:
         target = self._load_target()
@@ -190,7 +222,18 @@ class DockerBackend(SubprocessBackend):
         command.append(str(image))
         inner_command = [str(x) for x in self.spec.config.get("command", [])]
         if inner_command:
-            command.extend(inner_command)
+            rendered = [
+                item.format(
+                    input="/otn_io/request.json",
+                    output="/otn_io/result.json",
+                )
+                if "{input}" in item or "{output}" in item
+                else item
+                for item in inner_command
+            ]
+            command.extend(rendered)
+            if not self.spec.config.get("append_io_args", False):
+                return command
         command.extend(["--input", "/otn_io/request.json"])
         command.extend(["--output", "/otn_io/result.json"])
         return command

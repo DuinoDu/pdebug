@@ -2,9 +2,9 @@ import os
 import sys
 from pathlib import Path
 from typing import Optional
+from functools import lru_cache
 
 from pdebug.data_types import PointcloudTensor
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input
 from pdebug.utils.env import TORCH_INSTALLED
 from pdebug.utils.fileio import do_system
@@ -28,34 +28,57 @@ client = None
 API_endpoint = "https://liheyoung-depth-anything.hf.space/--replicas/l4hs0/"
 
 
-@otn_manager.NODE.register(name="depth_anything")
+@lru_cache(maxsize=1)
+def _load_depth_anything_model():
+    assert TORCH_INSTALLED
+    from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+
+    model_id = "depth-anything/Depth-Anything-V2-Small-hf"
+    processor = AutoImageProcessor.from_pretrained(model_id)
+    model = AutoModelForDepthEstimation.from_pretrained(model_id)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = model.to(device).eval()
+    return model, processor, device
+
+
 def depth_anything(
     image_path: str = "/mnt/c/Users/Admin/Pictures/dangdang1.jpg",
     output: str = "vis_depth.png",
     do_vis: bool = True,
 ):
     """Infer depth-anything."""
-    global client
-    assert Client is not None
-    if client is None:
-        client = Client(API_endpoint)
+    assert TORCH_INSTALLED
+    from PIL import Image
 
-    result = client.predict(image_path, api_name="/on_submit")
-
-    rgb_file = result[0][0]
-    depth_vis_file = result[0][1]
-    depth_raw_file = result[1]
+    model, processor, device = _load_depth_anything_model()
+    image = Image.open(image_path).convert("RGB")
+    inputs = processor(images=image, return_tensors="pt")
+    inputs = {
+        key: value.to(device) if hasattr(value, "to") else value
+        for key, value in inputs.items()
+    }
+    with torch.inference_mode():
+        outputs = model(**inputs)
+        prediction = torch.nn.functional.interpolate(
+            outputs.predicted_depth.unsqueeze(1),
+            size=image.size[::-1],
+            mode="bicubic",
+            align_corners=False,
+        ).squeeze()
+    depth_data = prediction.detach().cpu().numpy()
+    depth_raw_file = output
+    if not do_vis:
+        np.save(output, depth_data)
+        return str(output)
 
     if do_vis:
-        rgb = cv2.imread(rgb_file)
-        depth_data = cv2.imread(depth_raw_file, cv2.IMREAD_UNCHANGED)
-
+        rgb = cv2.imread(str(image_path))
         vis_depth = draw.depth(
-            depth_data, image=rgb, hist=True, vertical=False
+            depth_data, image=rgb, hist=False, vertical=False
         )
         cv2.imwrite(output, vis_depth)
         typer.echo(typer.style(f"saved to {output}", fg=typer.colors.GREEN))
-    return depth_raw_file
+    return str(depth_raw_file)
 
 
 def depth_to_pcd(
@@ -81,7 +104,61 @@ def depth_to_pcd(
     return pcd
 
 
-@otn_manager.NODE.register(name="depth-anything-video")
+def _save_depth_anything_video_fallback(
+    frames, output_video_path, fps=10, is_depths=False, grayscale=False
+):
+    """Write mp4 output without relying on Video-Depth-Anything imageio args."""
+    output_video_path = str(output_video_path)
+    data = np.asarray(frames)
+    if is_depths:
+        import matplotlib.cm as cm
+
+        if data.ndim != 3:
+            raise ValueError(
+                f"expected depth frames with shape T,H,W; got {data.shape}"
+            )
+        d_min, d_max = float(np.min(data)), float(np.max(data))
+        denom = d_max - d_min
+        if denom <= 1e-8:
+            depth_norm = np.zeros(data.shape, dtype=np.uint8)
+        else:
+            depth_norm = ((data - d_min) / denom * 255).astype(np.uint8)
+        if grayscale:
+            data = np.repeat(depth_norm[..., None], 3, axis=-1)
+        else:
+            colormap = np.array(cm.get_cmap("inferno").colors)
+            data = (colormap[depth_norm] * 255).astype(np.uint8)
+    if data.ndim != 4:
+        raise ValueError(
+            f"expected video frames with shape T,H,W,C; got {data.shape}"
+        )
+    height, width = data.shape[1:3]
+    writer = cv2.VideoWriter(
+        output_video_path,
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        float(fps),
+        (width, height),
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"failed to open video writer: {output_video_path}")
+    try:
+        for frame in data:
+            if frame.dtype != np.uint8:
+                frame = np.clip(frame, 0, 255).astype(np.uint8)
+            writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    finally:
+        writer.release()
+
+
+def _save_depth_anything_video(save_video, frames, output_path, **kwargs):
+    try:
+        save_video(frames, output_path, **kwargs)
+    except TypeError as exc:
+        if "macro_block_size" not in str(exc):
+            raise
+        _save_depth_anything_video_fallback(frames, output_path, **kwargs)
+
+
 def depth_anything_video(
     input_path: str = None,
     output: str = "tmp_depth_anything_video",
@@ -147,7 +224,7 @@ def depth_anything_video(
 
     if input_path.is_file():
         frames, target_fps = read_video_frames(
-            input_path, max_len, -1, max_res
+            str(input_path), max_len, -1, max_res
         )
     else:
         frames = [
@@ -196,7 +273,9 @@ def depth_anything_video(
                     inv_depth = np.zeros_like(depth, dtype=np.float32)
                     inv_depth[finite] = 1.0 / depth[finite]
                     scale = 1000.0 / np.median(inv_depth[finite])
-                    depth_mm = np.clip(inv_depth * scale, 0, np.iinfo(np.uint16).max)
+                    depth_mm = np.clip(
+                        inv_depth * scale, 0, np.iinfo(np.uint16).max
+                    )
                 else:
                     depth_mm = np.zeros_like(depth, dtype=np.float32)
             cv2.imwrite(str(savename), depth_mm.astype(np.uint16))
@@ -209,8 +288,9 @@ def depth_anything_video(
         depth_vis_path = os.path.join(
             vis_output, os.path.splitext(video_name)[0] + "_vis.mp4"
         )
-        save_video(frames, processed_video_path, fps=fps)
-        save_video(
+        _save_depth_anything_video(save_video, frames, processed_video_path, fps=fps)
+        _save_depth_anything_video(
+            save_video,
             depths, depth_vis_path, fps=fps, is_depths=True, grayscale=False
         )
 

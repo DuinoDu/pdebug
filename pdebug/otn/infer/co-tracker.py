@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 
 from pdebug.geometry import Vector2d
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input
 from pdebug.utils.env import TORCH_INSTALLED
 from pdebug.utils.fileio import save_json
@@ -36,7 +35,6 @@ UNITTEST_DATA = (
 )
 
 
-@otn_manager.NODE.register(name="cotracker")
 def cotracker_main(
     input_path: str,
     grid_size: int = 10,
@@ -309,7 +307,6 @@ def get_center_points(kps, topk):
     return kps[idx]
 
 
-@otn_manager.NODE.register(name="video_kps_to_all")
 def video_kps_to_all(
     path: str,
     anno_kps: str = None,

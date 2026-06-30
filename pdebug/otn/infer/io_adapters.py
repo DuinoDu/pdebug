@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Dict, Optional, Union
 
-from pdebug.otn.inference import ImageInferenceRunner
+from pdebug.otn.infer.base import ImageInferenceRunner
 from pdebug.piata import (
     read_image_batch,
     write_json_result,

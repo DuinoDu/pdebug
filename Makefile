@@ -34,6 +34,9 @@ test:
 	$(PYTEST) -s ./pdebug/utils/tests
 	$(PYTEST) -s ./pdebug/debug/tests || [ $$? -eq 5 ]
 
+model-integration-test:
+	PDEBUG_RUN_MODEL_INTEGRATION=1 $(PYTEST) -s ./pdebug/otn/tests/infer/test_real_model_integration.py
+
 watch-test:
 	ptw --runner "$(PYTEST) -s $(TEST_DIRS)"
 

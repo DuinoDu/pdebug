@@ -1,0 +1,80 @@
+{
+  "name": "cotracker",
+  "task": "inference",
+  "description": "Run co_tracker on video.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "cotracker_main",
+    "file": "../co-tracker.py"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "grid_size": {
+      "type": "int",
+      "default": 10
+    },
+    "grid_query_frame": {
+      "type": "int",
+      "default": 0
+    },
+    "output": {
+      "type": "str",
+      "default": "tmp_cotracker"
+    },
+    "vis_output": {
+      "type": "str",
+      "default": "tmp_cotracker_vis"
+    },
+    "cache": {
+      "type": "bool",
+      "default": false
+    },
+    "backward_tracking": {
+      "type": "bool",
+      "default": true
+    },
+    "mask_path": {
+      "type": "str",
+      "default": null
+    },
+    "model_name": {
+      "type": "str",
+      "default": "cotracker3_offline"
+    },
+    "unittest": {
+      "type": "bool",
+      "default": false
+    },
+    "max_frames": {
+      "type": "int",
+      "default": null
+    },
+    "fps": {
+      "type": "int",
+      "default": 1
+    },
+    "model_input_size": {
+      "type": "int",
+      "default": 60
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

@@ -1,15 +1,15 @@
 import os
 import shutil
 import sys
+import types
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Tuple
 
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input, Output
 from pdebug.utils import install_x
 from pdebug.utils.env import HUGGINGFACE_HUB_INSTALLED, TORCH_INSTALLED
-from pdebug.utils.fileio import do_system, download_file
+from pdebug.utils.fileio import download_file
 from pdebug.visp import draw
 
 import cv2
@@ -44,34 +44,190 @@ def patch_for_mmcv():
     torch.load = _load
 
 
-def prepare():
-    """Prepare deps for internimage"""
+def _ensure_path(path: Path) -> None:
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
+
+
+def _resolve_repo(repo: Optional[str] = None) -> str:
+    if repo:
+        repo_path = Path(repo).expanduser()
+        if repo_path.exists():
+            return str(repo_path.resolve())
 
     repo_path = install_x.get_repo("DCNv4")
+    if repo_path:
+        return str(Path(repo_path).resolve())
+
+    model_cache = os.getenv(
+        "PDEBUG_MODEL_CACHE", "~/.cache/pdebug-model-integration"
+    )
+    cache_repo = (
+        Path(model_cache)
+        .expanduser()
+        / "repos"
+        / "DCNv4"
+    )
+    if cache_repo.exists():
+        return str(cache_repo.resolve())
+
+    local_repo = Path("~/code/github/DCNv4").expanduser()
+    if local_repo.exists():
+        return str(local_repo.resolve())
+
+    local_internimage = Path("~/code/github/InternImage").expanduser()
+    if local_internimage.exists():
+        return str(local_internimage.resolve())
+
+    return ""
+
+
+def _patch_mmcv_ops_for_legacy_mmseg() -> None:
+    """Allow old MMSeg imports when mmcv-full is not installed.
+
+    The DCNv4 small UPerNet config used by the smoke test does not execute
+    these optional mmcv ops. Old MMSeg imports them eagerly, so provide narrow
+    Python fallbacks to get the real DCNv4 model initialized.
+    """
+    try:
+        import mmcv.ops  # noqa: F401
+
+        return
+    except ModuleNotFoundError as exc:
+        if exc.name != "mmcv._ext":
+            raise
+
+    import torch.nn as nn
+    import torch.nn.functional as nn_functional
+
+    ops_mod = types.ModuleType("mmcv.ops")
+
+    def point_sample(input, points, align_corners=False, **kwargs):
+        add_dim = points.dim() == 3
+        if add_dim:
+            points = points.unsqueeze(2)
+        output = nn_functional.grid_sample(
+            input,
+            points * 2.0 - 1.0,
+            align_corners=align_corners,
+            **kwargs,
+        )
+        if add_dim:
+            output = output.squeeze(3)
+        return output
+
+    def sigmoid_focal_loss(
+        pred,
+        target,
+        gamma=2.0,
+        alpha=0.25,
+        weight=None,
+        reduction="mean",
+    ):
+        target = nn_functional.one_hot(target, pred.size(1)).type_as(pred)
+        pred_sigmoid = pred.sigmoid()
+        pt = (1 - pred_sigmoid) * target + pred_sigmoid * (1 - target)
+        focal_weight = (alpha * target + (1 - alpha) * (1 - target)) * (
+            pt**gamma
+        )
+        loss = nn_functional.binary_cross_entropy_with_logits(
+            pred, target, reduction="none"
+        ) * focal_weight
+        if weight is not None and weight.numel():
+            loss = loss * weight
+        if reduction == "sum":
+            return loss.sum()
+        if reduction == "mean":
+            return loss.mean()
+        return loss
+
+    class _UnavailableMmcvOp(nn.Module):
+        op_name = "mmcv op"
+
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            raise RuntimeError(
+                f"{self.op_name} requires mmcv-full CUDA ops. "
+                "The InternImage small UPerNet path does not use it."
+            )
+
+    class CrissCrossAttention(_UnavailableMmcvOp):
+        op_name = "CrissCrossAttention"
+
+    class PSAMask(_UnavailableMmcvOp):
+        op_name = "PSAMask"
+
+    class MultiScaleDeformableAttention(_UnavailableMmcvOp):
+        op_name = "MultiScaleDeformableAttention"
+
+    def get_onnxruntime_op_path():
+        return ""
+
+    ops_mod.point_sample = point_sample
+    ops_mod.sigmoid_focal_loss = sigmoid_focal_loss
+    ops_mod.CrissCrossAttention = CrissCrossAttention
+    ops_mod.PSAMask = PSAMask
+    ops_mod.MultiScaleDeformableAttention = MultiScaleDeformableAttention
+    ops_mod.get_onnxruntime_op_path = get_onnxruntime_op_path
+
+    msda_mod = types.ModuleType("mmcv.ops.multi_scale_deform_attn")
+    msda_mod.MultiScaleDeformableAttention = MultiScaleDeformableAttention
+
+    custom_msda_mod = types.ModuleType(
+        "mmseg_custom.models.decode_heads.msda"
+    )
+    custom_msda_mod.CustomMultiScaleDeformableAttention = (
+        MultiScaleDeformableAttention
+    )
+
+    sys.modules["mmcv.ops"] = ops_mod
+    sys.modules["mmcv.ops.multi_scale_deform_attn"] = msda_mod
+    sys.modules["mmseg_custom.models.decode_heads.msda"] = custom_msda_mod
+
+
+def _prepare_repo_imports(repo: str) -> None:
+    repo_path = Path(repo).expanduser().resolve()
+    _ensure_path(repo_path / "segmentation")
+    _patch_mmcv_ops_for_legacy_mmseg()
+
+
+def _import_internimage_deps(repo: str):
+    _prepare_repo_imports(repo)
+
+    import mmcv_custom  # noqa: F401
+    import mmseg_custom  # noqa: F401
+    from mmcv.runner import load_checkpoint
+    from mmseg.apis import inference_segmentor, init_segmentor
+    from mmseg.core import get_classes
+    from mmseg.core.evaluation import get_palette
+
+    return (
+        load_checkpoint,
+        inference_segmentor,
+        init_segmentor,
+        get_classes,
+        get_palette,
+    )
+
+
+def prepare(repo: Optional[str] = None):
+    """Prepare deps for internimage"""
+
+    repo_path = _resolve_repo(repo)
     if not repo_path:
         print("Try to install repo by `bash $INSTALL/DCNv4.sh` ...")
         install_x.install("DCNv4")
-
-    repo = Path(repo_path).resolve()
-    sys.path.append(str(repo / "segmentation"))
+        repo_path = _resolve_repo(repo)
 
     try:
-        import mmcv_custom
-        import mmseg_custom
-        from mmcv.runner import load_checkpoint
-        from mmseg.apis import inference_segmentor, init_segmentor
-        from mmseg.core import get_classes
-        from mmseg.core.evaluation import get_palette
+        _import_internimage_deps(repo_path)
     except ModuleNotFoundError as e:
         print(e)
         install_x.install("DCNv4")
+        repo_path = _resolve_repo(repo)
         try:
-            import mmcv_custom
-            import mmseg_custom
-            from mmcv.runner import load_checkpoint
-            from mmseg.apis import inference_segmentor, init_segmentor
-            from mmseg.core import get_classes
-            from mmseg.core.evaluation import get_palette
+            _import_internimage_deps(repo_path)
         except ModuleNotFoundError as e:
             print(e)
             install_x.print_and_exit(
@@ -105,13 +261,13 @@ def _load_internimage_model(
 
 
 def init_model(repo: str, model_type: str = "small", device: str = "cuda:0"):
-
-    import mmcv_custom
-    import mmseg_custom
-    from mmcv.runner import load_checkpoint
-    from mmseg.apis import inference_segmentor, init_segmentor
-    from mmseg.core import get_classes
-    from mmseg.core.evaluation import get_palette
+    (
+        load_checkpoint,
+        inference_segmentor,
+        init_segmentor,
+        get_classes,
+        get_palette,
+    ) = _import_internimage_deps(repo)
 
     patch_for_mmcv()
 
@@ -119,7 +275,7 @@ def init_model(repo: str, model_type: str = "small", device: str = "cuda:0"):
         HUGGINGFACE_HUB_INSTALLED
     ), "huggingface_hub is required, but not found. Please install it first."
 
-    MODEL_LIST = [
+    model_list = [
         "upernet_flash_internimage_s_512_160k_ade20k",
         "upernet_flash_internimage_b_512_160k_ade20k",
         "upernet_flash_internimage_t_512_160k_ade20k",
@@ -130,11 +286,11 @@ def init_model(repo: str, model_type: str = "small", device: str = "cuda:0"):
         "mask2former_flash_internimage_l_640_160k_ade20k_ss",
     ]
     if model_type == "small":
-        model_name = MODEL_LIST[0]
+        model_name = model_list[0]
     elif model_type == "big":
-        model_name = MODEL_LIST[-1]
+        model_name = model_list[-1]
     else:
-        assert model_type in MODEL_LIST
+        assert model_type in model_list
         model_name = model_type
 
     cfg_file = Path(repo) / f"segmentation/configs/ade20k/{model_name}.py"
@@ -152,7 +308,7 @@ def init_model(repo: str, model_type: str = "small", device: str = "cuda:0"):
     if "CLASSES" in checkpoint.get("meta", {}):
         model.CLASSES = checkpoint["meta"]["CLASSES"]
     else:
-        model.CLASSES = get_classes(args.palette)
+        model.CLASSES = get_classes("ade20k")
     return model, inference_segmentor, color_palette
 
 
@@ -164,8 +320,9 @@ def _internimage_cache_clear() -> None:
         try:
             model, _, _ = _cached_internimage_model()
             if TORCH_INSTALLED:
-                import torch
                 import gc
+
+                import torch
 
                 if torch.cuda.is_available():
                     try:
@@ -198,11 +355,14 @@ def _internimage_cache_clear() -> None:
             pass
 
 
-_cached_internimage_model.cache_clear = _internimage_cache_clear  # type: ignore[assignment]
-_load_internimage_model.cache_clear = _cached_internimage_model.cache_clear  # type: ignore[attr-defined]
+_cached_internimage_model.cache_clear = (  # type: ignore[assignment]
+    _internimage_cache_clear
+)
+_load_internimage_model.cache_clear = (  # type: ignore[attr-defined]
+    _cached_internimage_model.cache_clear
+)
 
 
-@otn_manager.NODE.register(name="internimage_semseg")
 def main(
     input_path: str = None,
     output: str = "tmp_semseg",
@@ -220,8 +380,8 @@ def main(
     GPU Memory: 6.5G
 
     Args:
-        model_type: model type name. Available: small for upernet_s, big for mask2former_l.
-            Defualt is "small".
+        model_type: model type name. Available: small for upernet_s,
+            big for mask2former_l. Defualt is "small".
 
     Unittest:
         >> otn-cli --node internimage_semseg --unittest True
@@ -234,7 +394,10 @@ def main(
 
     if unittest:
         if not os.getenv("PDEBUG_TEST_IMAGE", None):
-            url = "https://upload.wikimedia.org/wikipedia/en/7/7d/Lenna_%28test_image%29.png"
+            url = (
+                "https://upload.wikimedia.org/wikipedia/en/7/7d/"
+                "Lenna_%28test_image%29.png"
+            )
             print(f"Run unittest on {url}")
             download_file(url, "/tmp/lenna.png", exit_when_failed=True)
             input_files = ["/tmp/lenna.png"]
@@ -251,7 +414,7 @@ def main(
                 vis_output / "visualization.mp4", name="video_ffmpeg"
             ).get_writer()
 
-    repo = prepare()
+    repo = prepare(repo)
     model, inference_segmentor, color_palette = init_model(
         repo, model_type, device
     )
@@ -445,11 +608,9 @@ ADE_CLASSES = [
     "flag",
 ]
 
-from mmseg.core.evaluation import get_palette
-COLOR_PALETTE = get_palette("ade20k")
+COLOR_PALETTE = None
 
 
-@otn_manager.NODE.register(name="remove_dynamic")
 def remove_dynamic(
     input_path: str = None,
     mask_path: str = None,
@@ -481,7 +642,8 @@ def remove_dynamic(
         target_ids = [int(s) for s in remove_mask_idx.split(",")]
     else:
         raise ValueError(
-            "Please provide mask idx to remove, by --revemo-ade-names or --remove-mask-ids"
+            "Please provide mask idx to remove, by --revemo-ade-names "
+            "or --remove-mask-ids"
         )
 
     t = tqdm.tqdm(total=len(rgb_reader))

@@ -1,0 +1,35 @@
+{
+  "name": "sam6d-to-sam2",
+  "task": "inference",
+  "description": "Convert first frame seg json in sam6d result to sam2 prompt.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "to_sam2",
+    "module": "pdebug.otn.infer.sam6d"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "mask_path": {
+      "type": "str"
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

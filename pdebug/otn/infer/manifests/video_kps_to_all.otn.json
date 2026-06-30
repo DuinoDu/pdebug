@@ -1,0 +1,52 @@
+{
+  "name": "video_kps_to_all",
+  "task": "inference",
+  "description": "Run co_tracker on video, based on cvat annotate keypoints.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "video_kps_to_all",
+    "file": "../co-tracker.py"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "path": {
+      "type": "str"
+    },
+    "anno_kps": {
+      "type": "str",
+      "default": null
+    },
+    "output": {
+      "type": "str",
+      "default": "tmp_keypoints.pkl"
+    },
+    "cache": {
+      "type": "bool",
+      "default": false
+    },
+    "vis_output": {
+      "type": "str",
+      "default": null
+    },
+    "topk": {
+      "type": "int",
+      "default": null
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

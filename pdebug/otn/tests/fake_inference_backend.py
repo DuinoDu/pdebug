@@ -1,4 +1,4 @@
-from pdebug.otn.inference import InferenceRequest
+from pdebug.otn.infer.base import InferenceRequest
 
 
 class EchoBackend:

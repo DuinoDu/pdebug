@@ -9,6 +9,9 @@ import json
 import os
 import sys
 import time
+import types
+from contextlib import contextmanager
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 
 from pdebug.data_types import Camera, PointcloudTensor, Sam6dResult
@@ -36,6 +39,64 @@ try:
     from cutoop.transform import transform_coordinates_3d
 except ModuleNotFoundError:
     pass
+
+
+def _append_repo_path(repo: Path) -> None:
+    """Expose GenPose2 modules without hiding installed dependencies."""
+    repo_str = str(repo)
+    for module_name in ("configs", "datasets", "networks", "runners", "utils"):
+        module_path = repo / module_name
+        if not module_path.exists():
+            continue
+        module = sys.modules.get(module_name)
+        module_file = str(getattr(module, "__file__", ""))
+        if module is None or not module_file.startswith(repo_str):
+            package = types.ModuleType(module_name)
+            package.__path__ = [str(module_path)]
+            package.__package__ = module_name
+            package.__spec__ = ModuleSpec(module_name, loader=None)
+            package.__spec__.submodule_search_locations = [str(module_path)]
+            sys.modules[module_name] = package
+    paths = [
+        repo,
+        repo / "networks/pts_encoder/pointnet2_utils/pointnet2",
+    ]
+    for path in reversed(paths):
+        path_str = str(path)
+        if path.exists() and path_str not in sys.path:
+            sys.path.insert(0, path_str)
+
+
+def _require_import(import_stmt: str, install_hint: str):
+    try:
+        with _isolated_argv():
+            namespace = {}
+            exec(import_stmt, namespace)
+        return namespace
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            f"GenPose2 real integration dependency missing: {exc.name}. "
+            f"{install_hint}"
+        ) from exc
+
+
+@contextmanager
+def _isolated_argv():
+    original_argv = sys.argv[:]
+    try:
+        sys.argv = [original_argv[0]]
+        yield
+    finally:
+        sys.argv = original_argv
+
+
+def _camera_intrinsics(meta_data):
+    """Read intrinsics from either cutoop metadata objects or dict payloads."""
+    if isinstance(meta_data, dict):
+        intrs = meta_data["camera"]["intrinsics"]
+        return [intrs["fx"], intrs["fy"], intrs["cx"], intrs["cy"]]
+    intrs = meta_data.camera.intrinsics
+    return [intrs.fx, intrs.fy, intrs.cx, intrs.cy]
 
 
 def sam6d_camera_to_genpose2_meta(camera_file):
@@ -167,7 +228,6 @@ def rotate_bbox3d(
     return cam_bbox3d
 
 
-@otn_manager.NODE.register(name="genpose2")
 def main(
     rgb_path: str = None,
     depth_path: str = None,
@@ -275,10 +335,23 @@ def main(
     if not repo.exists():
         raise RuntimeError(f"GenPose2 repository not found at {repo}")
 
-    # Add repo to sys.path and imports
-    sys.path.insert(0, str(repo))
-    from cutoop.data_loader import Dataset
-    from runners.infer import GenPose2, InferDataset, visualize_pose
+    # Expose GenPose2's top-level packages without replacing installed
+    # third-party packages such as cutoop.
+    _append_repo_path(repo)
+    Dataset = _require_import(
+        "from cutoop.data_loader import Dataset",
+        "Install the official Omni6DPoseAPI package with `pip install cutoop`.",
+    )["Dataset"]
+    infer_ns = _require_import(
+        "from runners.infer import GenPose2, InferDataset, visualize_pose",
+        (
+            "Install GenPose2 runtime dependencies from the official repo "
+            "requirements, including pyrealsense2 if runners.infer imports it."
+        ),
+    )
+    GenPose2 = infer_ns["GenPose2"]
+    InferDataset = infer_ns["InferDataset"]
+    visualize_pose = infer_ns["visualize_pose"]
 
     # Model paths
     score_model_path = repo / score_model
@@ -288,18 +361,24 @@ def main(
     # Check model files exist
     for model_path in [score_model_path, energy_model_path, scale_model_path]:
         if not model_path.exists():
-            raise RuntimeError(f"Model file not found: {model_path}")
+            raise RuntimeError(
+                "GenPose2 checkpoint missing: "
+                f"{model_path}. Download the official trained checkpoints "
+                "linked in GenPose2 README to repo/results/ckpts/ScoreNet, "
+                "EnergyNet, and ScaleNet."
+            )
 
     typer.echo(
         typer.style(f"Loading GenPose2 from {repo}", fg=typer.colors.GREEN)
     )
 
     # Initialize GenPose2
-    genpose2 = GenPose2(
-        score_model_path=str(score_model_path),
-        energy_model_path=str(energy_model_path),
-        scale_model_path=str(scale_model_path),
-    )
+    with _isolated_argv():
+        genpose2 = GenPose2(
+            score_model_path=str(score_model_path),
+            energy_model_path=str(energy_model_path),
+            scale_model_path=str(scale_model_path),
+        )
 
     if Path(rgb_path).is_file():
         reader = Input(rgb_path, name="video", topk=topk).get_reader()
@@ -402,10 +481,7 @@ def main(
             mask_img = cv2.erode(mask_img, kernel, iterations=1)
 
         if vis_rerun:
-            intrs = meta_data["camera"]["intrinsics"]
-            camera = Camera(
-                np.eye(4), [intrs["fx"], intrs["fy"], intrs["cx"], intrs["cy"]]
-            )
+            camera = Camera(np.eye(4), _camera_intrinsics(meta_data))
             depth_img_rr = depth_img.copy()
             depth_img_rr[~mask_img.astype(bool)] = 0
             vc = rr.ViewCoordinates.RFU
@@ -420,10 +496,7 @@ def main(
         if tracking_by_icp:
             from pdebug.otn.data import icp_node
 
-            intrs = meta_data["camera"]["intrinsics"]
-            camera = Camera(
-                np.eye(4), [intrs["fx"], intrs["fy"], intrs["cx"], intrs["cy"]]
-            )
+            camera = Camera(np.eye(4), _camera_intrinsics(meta_data))
             depth_img_obj = depth_img.copy()
             depth_img_obj[~mask_img.astype(bool)] = 0
 

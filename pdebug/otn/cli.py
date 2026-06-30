@@ -5,7 +5,7 @@ import os
 from typing import Optional
 
 from pdebug.otn import manager as otn_manager
-from pdebug.otn.inference import (
+from pdebug.otn.infer.base import (
     manifest_schema,
     node_healthcheck,
     node_to_schema,

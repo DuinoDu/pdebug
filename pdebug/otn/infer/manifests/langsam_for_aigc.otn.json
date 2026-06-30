@@ -1,0 +1,41 @@
+{
+  "name": "langsam_for_aigc",
+  "task": "inference",
+  "description": "Generate object roi image from LangSAM.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "langsam_for_aigc",
+    "module": "pdebug.otn.infer.langsam"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str",
+      "default": null
+    },
+    "text": {
+      "type": "str",
+      "default": "cube"
+    },
+    "output_path": {
+      "type": "str",
+      "default": "center_object.png"
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

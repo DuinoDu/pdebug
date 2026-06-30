@@ -1,0 +1,68 @@
+{
+  "name": "sam2",
+  "task": "inference",
+  "description": "SAM2 video segmentation.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "sam2_main",
+    "module": "pdebug.otn.infer.sam2_node"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str"
+    },
+    "points": {
+      "type": "str",
+      "default": null
+    },
+    "mask_path": {
+      "type": "str",
+      "default": null
+    },
+    "output": {
+      "type": "str",
+      "default": "tmp_sam2"
+    },
+    "vis_output": {
+      "type": "str",
+      "default": "tmp_sam2_vis"
+    },
+    "checkpoint": {
+      "type": "str",
+      "default": "large"
+    },
+    "device": {
+      "type": "str",
+      "default": "cpu"
+    },
+    "sam2_checkpoint_path": {
+      "type": "str",
+      "default": null
+    },
+    "repo": {
+      "type": "str",
+      "default": null
+    },
+    "cache": {
+      "type": "bool",
+      "default": true
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

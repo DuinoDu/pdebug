@@ -1,0 +1,106 @@
+{
+  "name": "sam6d_docker",
+  "task": "pose_estimation",
+  "description": "Run SAM-6D through the upstream Docker image and official demo pipeline using the OTN JSON file protocol.",
+  "backend": {
+    "type": "docker",
+    "image": "lihualiu/sam-6d:1.0",
+    "command": [
+      "bash",
+      "-lc",
+      "/opt/conda/envs/sam6d/bin/python - <<'PY'\nimport json\nimport os\nimport shutil\nimport subprocess\nfrom pathlib import Path\n\nrequest_path = Path('/otn_io/request.json')\nresult_path = Path('/otn_io/result.json')\nrequest = json.loads(request_path.read_text())\nargs = {}\nargs.update(request.get('inputs', {}))\nargs.update(request.get('parameters', {}))\n\nreplacements = [\n    ('/home/duino/.cache/pdebug-model-integration', '/pdebug_model_cache'),\n    ('/tmp', '/host_tmp'),\n]\n\ndef translate(value):\n    value = str(value)\n    for host, container in replacements:\n        if value == host or value.startswith(host + '/'):\n            return container + value[len(host):]\n    return value\n\ndef run(cmd, cwd, env):\n    print('Running official SAM-6D step:', ' '.join(str(item) for item in cmd), 'cwd=', cwd, flush=True)\n    result = subprocess.run([str(item) for item in cmd], cwd=cwd, env=env)\n    if result.returncode != 0:\n        raise SystemExit(result.returncode)\n\ndef require_file(path, label):\n    path = Path(path)\n    if not path.exists():\n        raise SystemExit(f'SAM-6D {label} was not produced: {path}')\n    return path\n\noutput = translate(args.get('output') or '/otn_io/sam6d_output')\noutput_path = Path(output)\nif output_path.exists():\n    shutil.rmtree(output_path)\noutput_path.mkdir(parents=True, exist_ok=True)\n\nenv = os.environ.copy()\nenv.update({\n    'CAD_PATH': translate(args['cad_path']),\n    'RGB_PATH': translate(args['rgb_path']),\n    'DEPTH_PATH': translate(args['depth_path']),\n    'CAMERA_PATH': translate(args['camera_path']),\n    'OUTPUT_DIR': output,\n    'PATH': '/opt/conda/envs/sam6d/bin:' + env.get('PATH', ''),\n})\nrepo = Path('/workspace/SAM-6D/SAM-6D')\nif not (repo / 'demo.sh').exists():\n    raise SystemExit('SAM-6D official demo.sh not found at /workspace/SAM-6D/SAM-6D/demo.sh')\n\nrender_dir = repo / 'Render'\nism_dir = repo / 'Instance_Segmentation_Model'\npem_dir = repo / 'Pose_Estimation_Model'\nrender_script = render_dir / 'render_custom_templates.py'\nism_script = ism_dir / 'run_inference_custom.py'\npem_script = pem_dir / 'run_inference_custom.py'\n\nrun([\n    'blenderproc', 'run', render_script,\n    '--output_dir', output,\n    '--cad_path', env['CAD_PATH'],\n], render_dir, env)\n\ntemplate_dir = output_path / 'templates'\nmissing_templates = []\nfor idx in range(42):\n    for name in (f'rgb_{idx}.png', f'mask_{idx}.png', f'xyz_{idx}.npy'):\n        if not (template_dir / name).exists():\n            missing_templates.append(str(template_dir / name))\nif missing_templates:\n    raise SystemExit('SAM-6D template rendering incomplete; missing: ' + ', '.join(missing_templates[:5]))\n\nrun([\n    'python', ism_script,\n    '--segmentor_model', 'sam',\n    '--output_dir', output,\n    '--cad_path', env['CAD_PATH'],\n    '--rgb_path', env['RGB_PATH'],\n    '--depth_path', env['DEPTH_PATH'],\n    '--cam_path', env['CAMERA_PATH'],\n    '--stability_score_thresh', str(args.get('stability_score_thresh', 0.5)),\n], ism_dir, env)\n\nseg_path = require_file(output_path / 'sam6d_results' / 'detection_ism.json', 'instance segmentation JSON')\nwith open(seg_path) as file:\n    detections = json.load(file)\nif not detections:\n    raise SystemExit(f'SAM-6D instance segmentation produced no detections: {seg_path}')\n\npem_seg_path = seg_path\npem_topk = args.get('pem_topk')\nif pem_topk is not None:\n    pem_topk = int(pem_topk)\n    if pem_topk > 0 and len(detections) > pem_topk:\n        detections = sorted(\n            detections,\n            key=lambda item: float(item.get('score', 0.0)),\n            reverse=True,\n        )[:pem_topk]\n        pem_seg_path = output_path / 'sam6d_results' / 'detection_ism_topk.json'\n        pem_seg_path.write_text(json.dumps(detections), encoding='utf-8')\n\nrun([\n    'python', pem_script,\n    '--output_dir', output,\n    '--cad_path', env['CAD_PATH'],\n    '--rgb_path', env['RGB_PATH'],\n    '--depth_path', env['DEPTH_PATH'],\n    '--cam_path', env['CAMERA_PATH'],\n    '--seg_path', str(pem_seg_path),\n], pem_dir, env)\n\npose_path = require_file(output_path / 'sam6d_results' / 'detection_pem.json', 'pose estimation JSON')\nwith open(pose_path) as file:\n    poses = json.load(file)\nresult_path.write_text(json.dumps({\n    'data': {'poses': poses, 'output': args.get('output')},\n    'artifacts': {'output': args.get('output')},\n    'metadata': {\n        'container_output': output,\n        'official_demo': str(repo / 'demo.sh'),\n        'official_steps': [str(render_script), str(ism_script), str(pem_script)],\n        'pem_topk': pem_topk,\n    },\n}, indent=2))\nPY"
+    ],
+    "gpu": true,
+    "timeout_sec": 1800,
+    "mounts": [
+      {
+        "host": "/home/duino/.cache/pdebug-model-integration/repos/SAM-6D",
+        "container": "/workspace/SAM-6D",
+        "required": true
+      },
+      {
+        "host": "/home/duino/.cache/pdebug-model-integration",
+        "container": "/pdebug_model_cache"
+      },
+      {
+        "host": "/tmp",
+        "container": "/host_tmp"
+      }
+    ]
+  },
+  "schemas": {
+    "input": {
+      "type": "object",
+      "required": [
+        "rgb_path",
+        "depth_path",
+        "cad_path",
+        "camera_path"
+      ],
+      "properties": {
+        "rgb_path": {
+          "type": "string"
+        },
+        "depth_path": {
+          "type": "string"
+        },
+        "cad_path": {
+          "type": "string"
+        },
+        "camera_path": {
+          "type": "string"
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "poses"
+      ],
+      "properties": {
+        "poses": {
+          "type": "array"
+        }
+      }
+    }
+  },
+  "parameters": {
+    "rgb_path": {
+      "type": "str"
+    },
+    "depth_path": {
+      "type": "str"
+    },
+    "cad_path": {
+      "type": "str"
+    },
+    "camera_path": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": null
+    },
+    "stability_score_thresh": {
+      "type": "float",
+      "default": 0.5
+    },
+    "pem_topk": {
+      "type": "int",
+      "default": null
+    }
+  },
+  "dependencies": {
+    "runtime": "docker",
+    "external_repo": "SAM-6D",
+    "official_image": "lihualiu/sam-6d:1.0",
+    "official_demo": "SAM-6D/demo.sh"
+  },
+  "capabilities": {
+    "batch": true,
+    "lance": false,
+    "devices": [
+      "cuda"
+    ]
+  }
+}

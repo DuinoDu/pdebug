@@ -1,0 +1,73 @@
+{
+  "name": "depth-anything-video",
+  "task": "inference",
+  "description": "Infer video-depth-anything.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "depth_anything_video",
+    "module": "pdebug.otn.infer.depth_anything"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str",
+      "default": null
+    },
+    "output": {
+      "type": "str",
+      "default": "tmp_depth_anything_video"
+    },
+    "vis_output": {
+      "type": "str",
+      "default": "tmp_depth_anything_video_vis"
+    },
+    "repo": {
+      "type": "str",
+      "default": null
+    },
+    "unittest": {
+      "type": "bool",
+      "default": false
+    },
+    "device": {
+      "type": "str",
+      "default": "cuda"
+    },
+    "encoder": {
+      "type": "str",
+      "default": "vitl"
+    },
+    "save_npz": {
+      "type": "bool",
+      "default": false
+    },
+    "save_exr": {
+      "type": "bool",
+      "default": false
+    },
+    "save_png": {
+      "type": "bool",
+      "default": false
+    },
+    "metric": {
+      "type": "bool",
+      "default": false
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

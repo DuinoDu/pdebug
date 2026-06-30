@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input, Output
 from pdebug.visp import draw
 
@@ -20,7 +19,17 @@ import typer
 from PIL import Image
 
 
-@otn_manager.NODE.register(name="hunyuan3d_shape")
+def _extract_mesh(pipeline_output):
+    """Normalize Hunyuan3D pipeline outputs across upstream versions."""
+    if hasattr(pipeline_output, "mesh"):
+        pipeline_output = pipeline_output.mesh
+    if isinstance(pipeline_output, (list, tuple)):
+        if not pipeline_output:
+            return None
+        return pipeline_output[0]
+    return pipeline_output
+
+
 def hunyuan3d_shape_main(
     repo: str,
     input_path: str,
@@ -100,14 +109,21 @@ def hunyuan3d_shape_main(
         image = Image.open(img_path).convert("RGBA")
 
         # Generate mesh
-        mesh = shape_pipeline(
-            image=image,
-            octree_resolution=octree_resolution,
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
-            num_chunks=num_chunks,
-            seed=seed + i,
-        )[0]
+        mesh = _extract_mesh(
+            shape_pipeline(
+                image=image,
+                octree_resolution=octree_resolution,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                num_chunks=num_chunks,
+                seed=seed + i,
+            )
+        )
+        if mesh is None:
+            raise RuntimeError(
+                "Hunyuan3D-Shape returned no mesh; increase "
+                "num_inference_steps or use an object-focused RGBA image."
+            )
 
         # Save mesh
         output_mesh_path = output / f"{img_path.stem}_shape.glb"

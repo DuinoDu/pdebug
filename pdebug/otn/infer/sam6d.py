@@ -7,7 +7,6 @@ from pathlib import Path
 
 from pdebug.data_types import PointcloudTensor
 from pdebug.geometry import Vector3d, WorldX, WorldY, WorldZ
-from pdebug.otn import manager as otn_manager
 from pdebug.piata import Input
 from pdebug.piata.coco.utils import binary_mask_to_bbox, binary_mask_to_rle
 from pdebug.utils.ddd import get_3D_corners, load_points_3d_from_cad
@@ -27,7 +26,6 @@ else:
     trimesh = None
 
 
-@otn_manager.NODE.register(name="sam6d")
 def main(
     rgb_path: str,
     depth_path: str,
@@ -200,7 +198,6 @@ def align_bbox_to_world(bbox_3d, R, t, T_world_cam, object_x_idx):
     return R
 
 
-@otn_manager.NODE.register(name="sam6d-to-linemod")
 def to_linemod(
     path: str,
     rgb: str,
@@ -507,7 +504,6 @@ def to_linemod(
     )
 
 
-@otn_manager.NODE.register(name="sam6d-to-sam2")
 def to_sam2(input_path, mask_path):
     """Convert first frame seg json in sam6d result to sam2 prompt."""
     input_path = Path(input_path) / "sam6d_results" / "detection_ism.json"
@@ -530,7 +526,6 @@ def to_sam2(input_path, mask_path):
     return mask_path
 
 
-@otn_manager.NODE.register(name="sam6d-from-sam2")
 def from_sam2(input_path, output_path):
     """Convert sam2 result to seg json in sam6d."""
 

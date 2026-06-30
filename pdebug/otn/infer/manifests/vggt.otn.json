@@ -1,0 +1,85 @@
+{
+  "name": "vggt",
+  "task": "inference",
+  "description": "Main VGGT inference node for 3D reconstruction from images.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "vggt_main",
+    "module": "pdebug.otn.infer.vggt_node"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "input_path": {
+      "type": "str",
+      "default": null
+    },
+    "output": {
+      "type": "str",
+      "default": "vggt_output"
+    },
+    "max_image_num": {
+      "type": "int",
+      "default": 30
+    },
+    "sample_mode": {
+      "type": "str",
+      "default": "random"
+    },
+    "use_ba": {
+      "type": "bool",
+      "default": false
+    },
+    "save_colmap": {
+      "type": "bool",
+      "default": false
+    },
+    "max_reproj_error": {
+      "type": "float",
+      "default": 8.0
+    },
+    "vis_thresh": {
+      "type": "float",
+      "default": 0.2
+    },
+    "query_frame_num": {
+      "type": "int",
+      "default": 8
+    },
+    "max_query_pts": {
+      "type": "int",
+      "default": 4096
+    },
+    "fine_tracking": {
+      "type": "bool",
+      "default": true
+    },
+    "conf_thres_value": {
+      "type": "float",
+      "default": 5.0
+    },
+    "apply_rgba_alpha": {
+      "type": "bool",
+      "default": true
+    },
+    "cache": {
+      "type": "bool",
+      "default": true
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}

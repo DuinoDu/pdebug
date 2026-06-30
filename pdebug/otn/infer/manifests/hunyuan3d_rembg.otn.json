@@ -1,0 +1,47 @@
+{
+  "name": "hunyuan3d_rembg",
+  "task": "inference",
+  "description": "Remove background from images using Hunyuan3D background remover.",
+  "backend": {
+    "type": "legacy_python",
+    "function": "hunyuan3d_rembg_main",
+    "module": "pdebug.otn.infer.hunyuan3d_rembg"
+  },
+  "schemas": {
+    "input": "LegacyPythonCall",
+    "output": "LegacyPythonReturn"
+  },
+  "parameters": {
+    "repo": {
+      "type": "str"
+    },
+    "input_path": {
+      "type": "str"
+    },
+    "output": {
+      "type": "str",
+      "default": "tmp_hunyuan3d_rembg"
+    },
+    "output_format": {
+      "type": "str",
+      "default": "RGBA"
+    },
+    "cache": {
+      "type": "bool",
+      "default": true
+    }
+  },
+  "dependencies": {
+    "extras": [
+      "otn"
+    ]
+  },
+  "capabilities": {
+    "batch": false,
+    "lance": false,
+    "devices": [
+      "cpu",
+      "cuda"
+    ]
+  }
+}
