@@ -8,5 +8,5 @@ worktree:
   sync_branch: false
   sync_submodules: true
   # When .gitmodules exists, initialize/update submodules in task worktrees.
-  symlink: []
+  symlink:
     - .venv 

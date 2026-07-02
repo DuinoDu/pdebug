@@ -1,22 +1,107 @@
 #!/usr/bin/env python3
 # https://pytorch.org/tutorials/beginner/examples_autograd/polynomial_autograd.html
 
+import argparse
 import math
 import os
 import socket
+import subprocess
 import sys
 
 import torch
 
 
-def main():
+GPU_ALLOC_CHUNK_BYTES = 256 * 1024 * 1024
+
+
+def gpu_fraction(value):
+    fraction = float(value)
+    if not 0.0 <= fraction <= 1.0:
+        message = "--gpu must be between 0 and 1, e.g. 0.5."
+        raise argparse.ArgumentTypeError(message)
+    return fraction
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Keep CUDA devices busy and reserve GPU memory."
+    )
+    parser.add_argument(
+        "--gpu",
+        type=gpu_fraction,
+        default=0.0,
+        help="GPU memory fraction to reserve per GPU. 0.5 means 50%%.",
+    )
+    parser.add_argument("--local-rank", "--local_rank", type=int, default=None)
+    return parser.parse_args()
+
+
+def get_local_rank(args):
+    local_rank = os.getenv("LOCAL_RANK", None)
+    if local_rank is not None:
+        return int(local_rank)
+    return args.local_rank
+
+
+def format_bytes(num_bytes):
+    gib = num_bytes / 1024**3
+    return f"{gib:.2f} GiB"
+
+
+def reserve_gpu_memory(device, fraction):
+    if fraction <= 0:
+        return []
+
+    device = torch.device(device)
+    if device.type != "cuda":
+        print("--gpu ignored because CUDA is not available.")
+        return []
+
+    torch.cuda.set_device(device)
+    total_bytes = torch.cuda.get_device_properties(device).total_memory
+    target_bytes = int(total_bytes * fraction)
+    allocated_bytes = torch.cuda.memory_allocated(device)
+    bytes_to_reserve = max(0, target_bytes - allocated_bytes)
+    if bytes_to_reserve == 0:
+        target = format_bytes(target_bytes)
+        message = f"GPU memory target already reached: {target}"
+        print(message)
+        return []
+
+    free_bytes, _ = torch.cuda.mem_get_info(device)
+    safety_margin = min(512 * 1024**2, max(64 * 1024**2, total_bytes // 100))
+    if bytes_to_reserve + safety_margin > free_bytes:
+        raise RuntimeError(
+            "Not enough free GPU memory to reserve "
+            f"{format_bytes(bytes_to_reserve)} on {device}. "
+            f"Free: {format_bytes(free_bytes)}, "
+            f"safety margin: {format_bytes(safety_margin)}."
+        )
+
+    tensors = []
+    remaining_bytes = bytes_to_reserve
+    while remaining_bytes > 0:
+        chunk_bytes = min(remaining_bytes, GPU_ALLOC_CHUNK_BYTES)
+        tensor = torch.empty(chunk_bytes, dtype=torch.uint8, device=device)
+        tensors.append(tensor)
+        remaining_bytes -= chunk_bytes
+
+    torch.cuda.synchronize(device)
+    reserved_bytes = sum(t.numel() * t.element_size() for t in tensors)
+    reserved = format_bytes(reserved_bytes)
+    message = f"Reserved {reserved} ({fraction:.0%}) on {device}."
+    print(message)
+    return tensors
+
+
+def main(args):
     dtype = torch.float
     device = "cpu"
     if torch.cuda.is_available():
-        device = "cuda"
-        local_rank = os.getenv("LOCAL_RANK", None)
-        if local_rank:
-            device += f":{local_rank}"
+        local_rank = get_local_rank(args)
+        cuda_index = 0 if local_rank is None else local_rank
+        device = f"cuda:{cuda_index}"
+        torch.cuda.set_device(cuda_index)
 
     # torch.set_default_device(device)
 
@@ -34,6 +119,8 @@ def main():
     b = torch.randn((), dtype=dtype, requires_grad=True).to(device)
     c = torch.randn((), dtype=dtype, requires_grad=True).to(device)
     d = torch.randn((), dtype=dtype, requires_grad=True).to(device)
+    reserved_gpu_memory = reserve_gpu_memory(device, args.gpu)
+    assert reserved_gpu_memory is not None
 
     learning_rate = 1e-6
     t = 0
@@ -84,10 +171,17 @@ def find_free_port():
 
 
 if __name__ == "__main__":
+    args = parse_args()
     num_gpus = torch.cuda.device_count()
     if num_gpus <= 1 or os.getenv("LOCAL_RANK"):
-        main()
+        main(args)
     else:
         port = find_free_port()
-        cmd = f"torchrun --nproc_per_node={num_gpus} --master_port={port} {sys.argv[0]}"
-        os.system(cmd)
+        cmd = [
+            "torchrun",
+            f"--nproc_per_node={num_gpus}",
+            f"--master_port={port}",
+            sys.argv[0],
+            *sys.argv[1:],
+        ]
+        sys.exit(subprocess.call(cmd))
